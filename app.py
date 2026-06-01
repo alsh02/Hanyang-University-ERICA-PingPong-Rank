@@ -142,9 +142,9 @@ def stats():
     # 부수별 집계
     div_counts = Counter(divisions)
     
-    # 부수 정렬 기준 (예: 1부, 2부, ... 순)
+    # 부수 정렬 기준 (예: -1부, 0부, 1부, ... 순)
     def get_div_num(div_name):
-        match = re.search(r'\d+', div_name)
+        match = re.search(r'-?\d+', div_name)
         return int(match.group()) if match else 999
         
     sorted_divs = sorted(div_counts.keys(), key=get_div_num)
