@@ -31,14 +31,14 @@ def normalize_division(div):
     if not div:
         return ""
     div_str = str(div).strip().replace(" ", "")
-    # 숫자만 입력된 경우 (예: '1', '2') -> '1부', '2부'로 변경
-    if div_str.isdigit():
+    # 음수 혹은 양수 정수만 입력된 경우 (예: '-1', '1', '2') -> 'X부'로 변경
+    if div_str.isdigit() or (div_str.startswith('-') and div_str[1:].isdigit()):
         return f"{div_str}부"
-    # 만약 '1부'와 같은 패턴이면 그대로 반환
-    match = re.match(r'^(\d+)부$', div_str)
+    # 만약 '-1부', '1부'와 같은 패턴이면 그대로 반환
+    match = re.match(r'^(-?\d+)부$', div_str)
     if match:
         return div_str
-    # 그 외 포맷은 일단 그대로 반환하되, 끝에 '부'를 붙이거나 적절히 보정
+    # 그 외 포맷은 일단 그대로 반환
     return div_str
 
 def normalize_racket(racket):
