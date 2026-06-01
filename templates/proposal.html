@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="ko" class="h-full bg-slate-950 text-slate-100">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>POWERDRIVE RANK - 도입 제안서 슬라이드</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&family=Noto+Sans+KR:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'Noto Sans KR', 'sans-serif'],
+                        outfit: ['Outfit', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    <!-- Lucide Icons CDN -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body {
+            font-family: 'Noto Sans KR', 'Inter', sans-serif;
+        }
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.45);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .slide-glow {
+            box-shadow: 0 0 40px rgba(99, 102, 241, 0.15);
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-indigo-950/50 via-slate-950 to-slate-950 p-4 sm:p-6 lg:p-8 antialiased selection:bg-indigo-500 selection:text-white">
+
+    <!-- 16:9 Presentation Slide Container -->
+    <div class="w-full max-w-6xl aspect-[16/9] glass-panel rounded-3xl p-8 md:p-10 slide-glow flex flex-col justify-between overflow-hidden relative border border-slate-800/80">
+        
+        <!-- Subtle Glowing Background Background Bubbles -->
+        <div class="absolute -right-20 -top-20 w-80 h-80 rounded-full bg-indigo-500/5 blur-3xl pointer-events-none"></div>
+        <div class="absolute -left-20 -bottom-20 w-80 h-80 rounded-full bg-rose-500/5 blur-3xl pointer-events-none"></div>
+
+        <!-- Slide Header -->
+        <div class="flex items-start justify-between border-b border-slate-800/80 pb-4 relative z-10">
+            <div>
+                <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold tracking-wider uppercase bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 mb-2">
+                    <i data-lucide="award" class="w-3 h-3"></i> Hanyang University ERICA 'TAKWOOHOI'
+                </span>
+                <h1 class="text-2xl md:text-3xl font-black font-outfit tracking-tight text-white flex items-center gap-2.5">
+                    POWERDRIVE <span class="bg-gradient-to-r from-indigo-400 via-purple-400 to-rose-400 bg-clip-text text-transparent">RANK</span>
+                    <span class="text-sm font-normal text-slate-400 border-l border-slate-700 pl-3">부수 검색 및 대시보드 도입 제안</span>
+                </h1>
+            </div>
+            <!-- Slide Indicator -->
+            <div class="text-right">
+                <p class="text-xs text-slate-500 uppercase tracking-widest font-outfit">1-Page Proposal</p>
+                <p class="text-[10px] text-slate-600 mt-0.5">2026. 06. 01</p>
+            </div>
+        </div>
+
+        <!-- Slide Body (2x2 Grid) -->
+        <div class="grid grid-cols-2 gap-6 my-6 flex-grow relative z-10">
+            
+            <!-- Card 1: WHY (도입 목적) -->
+            <div class="glass-panel bg-slate-950/40 rounded-2xl p-5 border border-slate-800/50 flex flex-col justify-between hover:border-indigo-500/30 hover:scale-[1.01] transition-all duration-300">
+                <div class="flex items-center gap-2.5 mb-3">
+                    <div class="p-2 bg-indigo-500/10 rounded-lg text-indigo-400">
+                        <i data-lucide="help-circle" class="w-4 h-4"></i>
+                    </div>
+                    <h3 class="font-bold text-white text-sm md:text-base">1. 도입 목적 (Why)</h3>
+                </div>
+                <ul class="space-y-2.5 text-xs text-slate-400 flex-grow justify-center flex flex-col">
+                    <li class="flex items-start gap-2 break-keep">
+                        <i data-lucide="check-circle" class="w-3.5 h-3.5 text-indigo-400 mt-0.5 flex-shrink-0"></i>
+                        <span><strong>편의성</strong>: 가입/로그인 없는 원클릭 모바일 1초 검색으로 정보 조회 피로도 해결</span>
+                    </li>
+                    <li class="flex items-start gap-2 break-keep">
+                        <i data-lucide="check-circle" class="w-3.5 h-3.5 text-indigo-400 mt-0.5 flex-shrink-0"></i>
+                        <span><strong>비용 제로</strong>: 추가 DB나 서버 운영 비용 없이 무료 클라우드 인프라 활용</span>
+                    </li>
+                    <li class="flex items-start gap-2 break-keep">
+                        <i data-lucide="check-circle" class="w-3.5 h-3.5 text-indigo-400 mt-0.5 flex-shrink-0"></i>
+                        <span><strong>운영 지원</strong>: 부수/전형 실시간 분석 시각화로 대회 대진표 및 팀 매칭 효율 극대화</span>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- Card 2: WHAT (주요 기능) -->
+            <div class="glass-panel bg-slate-950/40 rounded-2xl p-5 border border-slate-800/50 flex flex-col justify-between hover:border-rose-500/30 hover:scale-[1.01] transition-all duration-300">
+                <div class="flex items-center gap-2.5 mb-3">
+                    <div class="p-2 bg-rose-500/10 rounded-lg text-rose-400">
+                        <i data-lucide="cpu" class="w-4 h-4"></i>
+                    </div>
+                    <h3 class="font-bold text-white text-sm md:text-base">2. 핵심 기능 (What)</h3>
+                </div>
+                <ul class="space-y-2.5 text-xs text-slate-400 flex-grow justify-center flex flex-col">
+                    <li class="flex items-start gap-2 break-keep">
+                        <i data-lucide="search" class="w-3.5 h-3.5 text-rose-400 mt-0.5 flex-shrink-0"></i>
+                        <span><strong>스마트 키워드 검색</strong>: 이름, 부수, 라켓 부분 일치 매칭 및 상태 유지 검색</span>
+                    </li>
+                    <li class="flex items-start gap-2 break-keep">
+                        <i data-lucide="bar-chart-2" class="w-3.5 h-3.5 text-rose-400 mt-0.5 flex-shrink-0"></i>
+                        <span><strong>실시간 통계 시각화</strong>: 부수 분포 진행 바, 라켓 전형 비율 및 부수별 정렬 그룹 제공</span>
+                    </li>
+                    <li class="flex items-start gap-2 break-keep">
+                        <i data-lucide="shield-check" class="w-3.5 h-3.5 text-rose-400 mt-0.5 flex-shrink-0"></i>
+                        <span><strong>데이터 무결성 검증</strong>: 입력 오타(세이크, 3 등)를 쉐이크, 3부로 자동 정제 전처리</span>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- Card 3: HOW (아키텍처 및 흐름) -->
+            <div class="glass-panel bg-slate-950/40 rounded-2xl p-5 border border-slate-800/50 flex flex-col justify-between hover:border-purple-500/30 hover:scale-[1.01] transition-all duration-300">
+                <div class="flex items-center gap-2.5 mb-3">
+                    <div class="p-2 bg-purple-500/10 rounded-lg text-purple-400">
+                        <i data-lucide="git-commit" class="w-4 h-4"></i>
+                    </div>
+                    <h3 class="font-bold text-white text-sm md:text-base">3. 데이터 흐름 (How)</h3>
+                </div>
+                <!-- Visual Data Pipeline Flowchart -->
+                <div class="flex items-center justify-between gap-1 w-full bg-slate-950/60 p-3 rounded-xl border border-slate-900 my-auto">
+                    <!-- Step A -->
+                    <div class="text-center w-1/4">
+                        <div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center mx-auto text-emerald-400">
+                            <i data-lucide="file-spreadsheet" class="w-4 h-4"></i>
+                        </div>
+                        <p class="text-[9px] font-bold text-slate-300 mt-1 break-keep">운영진 시트</p>
+                    </div>
+                    <i data-lucide="chevron-right" class="w-3 h-3 text-slate-600"></i>
+                    <!-- Step B -->
+                    <div class="text-center w-1/4">
+                        <div class="w-7 h-7 rounded-lg bg-sky-500/10 border border-sky-500/30 flex items-center justify-center mx-auto text-sky-400">
+                            <i data-lucide="key-round" class="w-4 h-4"></i>
+                        </div>
+                        <p class="text-[9px] font-bold text-slate-300 mt-1 break-keep">Google API</p>
+                    </div>
+                    <i data-lucide="chevron-right" class="w-3 h-3 text-slate-600"></i>
+                    <!-- Step C -->
+                    <div class="text-center w-1/4">
+                        <div class="w-7 h-7 rounded-lg bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center mx-auto text-indigo-400">
+                            <i data-lucide="server" class="w-4 h-4"></i>
+                        </div>
+                        <p class="text-[9px] font-bold text-slate-300 mt-1 break-keep">Flask 정제</p>
+                    </div>
+                    <i data-lucide="chevron-right" class="w-3 h-3 text-slate-600"></i>
+                    <!-- Step D -->
+                    <div class="text-center w-1/4">
+                        <div class="w-7 h-7 rounded-lg bg-pink-500/10 border border-pink-500/30 flex items-center justify-center mx-auto text-pink-400">
+                            <i data-lucide="monitor" class="w-4 h-4"></i>
+                        </div>
+                        <p class="text-[9px] font-bold text-slate-300 mt-1 break-keep">웹 브라우저</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Card 4: DESIGN & LAYOUT (UI/UX 특징) -->
+            <div class="glass-panel bg-slate-950/40 rounded-2xl p-5 border border-slate-800/50 flex flex-col justify-between hover:border-emerald-500/30 hover:scale-[1.01] transition-all duration-300">
+                <div class="flex items-center gap-2.5 mb-3">
+                    <div class="p-2 bg-emerald-500/10 rounded-lg text-emerald-400">
+                        <i data-lucide="palette" class="w-4 h-4"></i>
+                    </div>
+                    <h3 class="font-bold text-white text-sm md:text-base">4. 사용자 경험 (UI/UX)</h3>
+                </div>
+                <ul class="space-y-2.5 text-xs text-slate-400 flex-grow justify-center flex flex-col">
+                    <li class="flex items-start gap-2 break-keep">
+                        <i data-lucide="palette" class="w-3.5 h-3.5 text-emerald-400 mt-0.5 flex-shrink-0"></i>
+                        <span><strong>스포티 다크 테마</strong>: 밤하늘 느낌의 트렌디하고 활기찬 Indigo/Rose 비주얼</span>
+                    </li>
+                    <li class="flex items-start gap-2 break-keep">
+                        <i data-lucide="smartphone" class="w-3.5 h-3.5 text-emerald-400 mt-0.5 flex-shrink-0"></i>
+                        <span><strong>모바일 우선 설계</strong>: 100% 반응형 최적화 레이아웃으로 모바일 편의성 극대화</span>
+                    </li>
+                    <li class="flex items-start gap-2 break-keep">
+                        <i data-lucide="type" class="w-3.5 h-3.5 text-emerald-400 mt-0.5 flex-shrink-0"></i>
+                        <span><strong>텍스트 정렬 개선</strong>: 어절 단위 자동 줄바꿈(break-keep)으로 깔끔한 문장 출력</span>
+                    </li>
+                </ul>
+            </div>
+
+        </div>
+
+        <!-- Slide Footer -->
+        <div class="flex justify-between items-center border-t border-slate-900 pt-4 text-[10px] text-slate-500 relative z-10 font-outfit">
+            <div class="flex items-center gap-4">
+                <span>PROJECT: pingpong_rank</span>
+                <span class="flex items-center gap-1"><i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-500"></i> 보안 및 프라이버시 조치 적용 (.gitignore)</span>
+            </div>
+            <div class="flex items-center gap-2 text-slate-400 font-bold uppercase tracking-wider">
+                <i data-lucide="arrow-right" class="w-3.5 h-3.5 text-rose-400"></i>
+                <a href="/" class="hover:text-white transition-colors flex items-center gap-1">데모 사이트 바로가기 <i data-lucide="external-link" class="w-3 h-3"></i></a>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Initialize Lucide Icons -->
+    <script>
+        lucide.createIcons();
+    </script>
+</body>
+</html>

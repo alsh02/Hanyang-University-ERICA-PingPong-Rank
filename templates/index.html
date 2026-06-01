@@ -1,0 +1,156 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<!-- Dummy Data Fallback Warning Banner -->
+{% if is_dummy %}
+<div class="mb-8 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-300 flex items-start gap-3 shadow-lg shadow-amber-500/5 animate-fade-in">
+    <i data-lucide="alert-triangle" class="w-5 h-5 text-amber-400 mt-0.5 flex-shrink-0"></i>
+    <div>
+        <h4 class="font-semibold text-sm">로컬 테스트 모드 (구글 시트 연동 전)</h4>
+        <p class="text-xs text-amber-400/80 mt-1 break-keep">현재 구글 API 키(`credentials.json`)가 없거나 시트 연동 오류로 인해 <strong>테스트용 데모 데이터</strong>가 노출되고 있습니다. 서비스를 배포하거나 실제 데이터를 보려면 구글 클라우드 설정을 완료해야 합니다.</p>
+    </div>
+</div>
+{% endif %}
+
+<!-- Hero Banner Header -->
+<div class="text-center my-10 max-w-2xl mx-auto">
+    <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 mb-4">
+        <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+        실시간 동아리 전력 분석
+    </span>
+    <h1 class="text-2xl sm:text-4xl font-extrabold font-outfit tracking-tight text-white mb-3">
+        탁우회 부원 <span class="bg-gradient-to-r from-indigo-400 to-rose-400 bg-clip-text text-transparent">부수 검색</span>
+    </h1>
+    <p class="text-slate-400 text-sm sm:text-base break-keep">
+        동아리 운영진과 부원들이 모바일 및 웹 환경에서 이름, 부수, 사용 라켓 정보를 손쉽게 검색할 수 있습니다.
+    </p>
+</div>
+
+<!-- Search Form Section -->
+<div class="max-w-3xl mx-auto mb-10">
+    <form action="/" method="GET" class="glass-panel p-4 rounded-2xl shadow-xl flex flex-col sm:flex-row gap-3">
+        <!-- Filter Dropdown -->
+        <div class="w-full sm:w-1/4 relative">
+            <select name="filter" class="w-full h-12 pl-4 pr-10 rounded-xl bg-slate-900 border border-slate-800 text-slate-200 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent appearance-none transition-all cursor-pointer">
+                <option value="이름" {% if filter == '이름' %}selected{% endif %}>이름으로 검색</option>
+                <option value="부수" {% if filter == '부수' %}selected{% endif %}>부수로 검색</option>
+                <option value="라켓" {% if filter == '라켓' %}selected{% endif %}>라켓전형 검색</option>
+            </select>
+            <div class="absolute inset-y-0 right-3 flex items-center pointer-events-none text-slate-500">
+                <i data-lucide="chevron-down" class="w-4 h-4"></i>
+            </div>
+        </div>
+
+        <!-- Search Input -->
+        <div class="w-full sm:w-2/3 relative">
+            <input type="text" name="query" value="{{ query }}" placeholder="검색어를 입력해 주세요 (예: 홍길동, 3부, 쉐이크)..." 
+                   class="w-full h-12 pl-11 pr-4 rounded-xl bg-slate-900 border border-slate-800 text-slate-100 text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all">
+            <div class="absolute inset-y-0 left-4 flex items-center pointer-events-none text-slate-500">
+                <i data-lucide="search" class="w-4.5 h-4.5"></i>
+            </div>
+        </div>
+
+        <!-- Search Button -->
+        <button type="submit" class="w-full sm:w-auto px-6 h-12 whitespace-nowrap bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 active:scale-95 text-white font-medium rounded-xl text-sm transition-all duration-200 flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20">
+            <i data-lucide="search" class="w-4 h-4 flex-shrink-0"></i>
+            <span>검색</span>
+        </button>
+    </form>
+</div>
+
+<!-- Search Results Header -->
+<div class="mb-6 flex items-center justify-between">
+    <div class="flex items-center gap-2">
+        <i data-lucide="users" class="w-5 h-5 text-indigo-400"></i>
+        <h3 class="text-lg font-bold text-white">
+            검색 결과 
+            <span class="text-indigo-400 ml-1 font-outfit">{{ members|length }}</span>명
+        </h3>
+    </div>
+    {% if query %}
+    <a href="/" class="text-xs text-rose-400 hover:text-rose-300 flex items-center gap-1 transition-colors">
+        <i data-lucide="rotate-ccw" class="w-3 h-3"></i>
+        <span>필터 초기화</span>
+    </a>
+    {% endif %}
+</div>
+
+<!-- Results Grid -->
+{% if members %}
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+    {% for member in members %}
+    <div class="glass-panel group p-5 rounded-2xl relative overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:border-indigo-500/30 hover:shadow-xl hover:shadow-indigo-500/5">
+        <!-- Subtle gradient background pattern -->
+        <div class="absolute -right-10 -bottom-10 w-24 h-24 rounded-full bg-indigo-500/5 group-hover:bg-indigo-500/10 blur-xl transition-all duration-300"></div>
+        
+        <!-- Header Info -->
+        <div class="flex justify-between items-start mb-4">
+            <div>
+                <h4 class="text-xl font-bold text-white group-hover:text-indigo-400 transition-colors flex items-center gap-1.5">
+                    {{ member.이름 }}
+                    {% if member.이름 == '한경민' %}
+                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-normal">운영진</span>
+                    {% endif %}
+                </h4>
+                <p class="text-xs text-slate-500 mt-1">탁우회 정회원</p>
+            </div>
+            <!-- Division Badge -->
+            <span class="inline-flex items-center justify-center px-3 py-1 rounded-xl text-xs font-extrabold bg-gradient-to-tr from-indigo-500/20 to-purple-500/20 text-indigo-300 border border-indigo-500/30 shadow-inner">
+                {{ member.부수 }}
+            </span>
+        </div>
+
+        <hr class="border-slate-800/80 my-3">
+
+        <!-- Details Info -->
+        <div class="flex items-center justify-between text-sm mt-3">
+            <span class="text-slate-500 flex items-center gap-1.5">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 text-slate-500 group-hover:text-indigo-400 transition-colors flex-shrink-0">
+                    <circle cx="10" cy="10" r="5.5" />
+                    <path d="m14 14 5 5" />
+                    <circle cx="17" cy="8" r="1.5" fill="currentColor" />
+                </svg>
+                라켓 전형
+            </span>
+            <span class="font-medium flex items-center gap-1.5">
+                {% if member.라켓 == '쉐이크' %}
+                <span class="inline-block w-2 h-2 rounded-full bg-sky-400 animate-pulse"></span>
+                <span class="text-sky-300 font-semibold">{{ member.라켓 }}</span>
+                {% elif member.라켓 == '펜홀더' %}
+                <span class="inline-block w-2 h-2 rounded-full bg-rose-400 animate-pulse"></span>
+                <span class="text-rose-300 font-semibold">{{ member.라켓 }}</span>
+                {% else %}
+                <span class="inline-block w-2 h-2 rounded-full bg-slate-400"></span>
+                <span class="text-slate-300">{{ member.라켓 }}</span>
+                {% endif %}
+            </span>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+  {% if is_initial %}
+  <!-- Initial State (첫 진입) -->
+  <div class="glass-panel text-center py-20 rounded-3xl border-dashed border-2 border-slate-800">
+      <div class="w-16 h-16 bg-indigo-950/60 rounded-full flex items-center justify-center mx-auto mb-4 border border-indigo-500/20 text-indigo-400">
+          <i data-lucide="search" class="w-6 h-6 animate-pulse"></i>
+      </div>
+      <h3 class="text-lg font-bold text-white mb-2">부원 검색을 시작해 보세요</h3>
+      <p class="text-slate-500 text-sm max-w-sm mx-auto px-4 break-keep">
+          상단 검색창에서 필터(이름, 부수, 라켓)를 선택하고 검색어를 입력하여 탁우회 부원 정보를 조회할 수 있습니다.
+      </p>
+  </div>
+  {% else %}
+  <!-- Empty State (검색 결과 없음) -->
+  <div class="glass-panel text-center py-20 rounded-3xl border-dashed border-2 border-slate-800">
+      <div class="w-16 h-16 bg-slate-900/60 rounded-full flex items-center justify-center mx-auto mb-4 border border-slate-800">
+          <i data-lucide="user-x" class="w-8 h-8 text-slate-500"></i>
+      </div>
+      <h3 class="text-lg font-bold text-white mb-2">검색 결과가 없습니다</h3>
+      <p class="text-slate-500 text-sm max-w-sm mx-auto px-4 break-keep">
+          검색어를 정확하게 입력하셨는지 확인해 주세요. 다른 검색어 혹은 필터를 선택해 보시는 것을 권장합니다.
+      </p>
+  </div>
+  {% endif %}
+{% endif %}
+{% endblock %}

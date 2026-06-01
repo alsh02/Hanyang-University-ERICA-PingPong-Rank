@@ -1,0 +1,13 @@
+# Google API Credentials (보안 필수)
+credentials.json
+
+# Python 환경 파일
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.env
+
+# OS files
+.DS_Store

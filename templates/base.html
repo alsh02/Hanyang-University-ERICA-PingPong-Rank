@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ko" class="h-full bg-slate-950 text-slate-100">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>POWERDRIVE RANK</title>
+    <!-- SEO Meta Tags -->
+    <meta name="description" content="대학 탁구 동아리 '탁우회' 부원들의 이름, 부수, 라켓(전형) 정보를 실시간으로 검색하고 통계 분포를 시각적으로 확인하는 대시보드 시스템입니다.">
+    <meta name="keywords" content="탁우회, 탁구, 탁구 동아리, 탁구 부수, 탁구 대시보드, 쉐이크, 펜홀더">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'Outfit', 'sans-serif'],
+                        outfit: ['Outfit', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    <!-- Lucide Icons CDN -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.45);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .text-glow {
+            text-shadow: 0 0 15px rgba(99, 102, 241, 0.5);
+        }
+    </style>
+</head>
+<body class="flex flex-col min-h-screen bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-indigo-950/40 via-slate-950 to-slate-950 antialiased selection:bg-indigo-500 selection:text-white w-full overflow-x-hidden">
+    
+    <!-- Top Header / Navigation -->
+    <header class="sticky top-0 z-50 w-full border-b border-slate-800/80 bg-slate-950/70 backdrop-blur-md">
+        <div class="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <!-- Logo -->
+                <div class="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
+                    <div class="p-1.5 sm:p-2 bg-gradient-to-tr from-indigo-500 to-rose-500 rounded-xl shadow-lg shadow-indigo-500/20">
+                        <i data-lucide="circle-dot" class="w-4 h-4 sm:w-6 sm:h-6 text-white animate-pulse"></i>
+                    </div>
+                    <a href="/" class="text-sm sm:text-lg md:text-xl font-bold font-outfit tracking-wider bg-gradient-to-r from-indigo-400 via-purple-400 to-rose-400 bg-clip-text text-transparent text-glow">
+                        POWERDRIVE <span class="text-white font-extrabold">RANK</span>
+                    </a>
+                </div>
+
+                <!-- Navigation Tabs -->
+                <nav class="flex items-center gap-1 sm:gap-2">
+                    <a href="/" id="nav-search" class="flex items-center gap-1.5 px-2 py-1.5 sm:px-4 sm:py-2 rounded-lg text-xs sm:text-sm font-medium transition-all duration-300 hover:bg-slate-800/60 text-slate-300 hover:text-white whitespace-nowrap">
+                        <i data-lucide="search" class="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0"></i>
+                        <span>부원 검색</span>
+                    </a>
+                    <a href="/stats" id="nav-stats" class="flex items-center gap-1.5 px-2 py-1.5 sm:px-4 sm:py-2 rounded-lg text-xs sm:text-sm font-medium transition-all duration-300 hover:bg-slate-800/60 text-slate-300 hover:text-white whitespace-nowrap">
+                        <i data-lucide="bar-chart-3" class="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0"></i>
+                        <span>대시보드</span>
+                    </a>
+                </nav>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Footer -->
+    <footer class="w-full border-t border-slate-900 bg-slate-950/50 py-6">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500">
+            <div class="flex items-center gap-2">
+                <span class="font-bold text-slate-400 font-outfit">POWERDRIVE</span>
+                <span>© 한양대학교 ERICA 탁구 동아리 탁우회. All rights reserved.</span>
+            </div>
+            <div class="flex items-center gap-4">
+                <span>클라이언트: 한경민 운영진</span>
+                <span class="flex items-center gap-1"><i data-lucide="database" class="w-3.5 h-3.5"></i> Google Sheets API 실시간 연동</span>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Initialize Lucide Icons -->
+    <script>
+        lucide.createIcons();
+
+        // Highlight active navigation tab
+        const currentPath = window.location.pathname;
+        if (currentPath === '/' || currentPath === '') {
+            const btn = document.getElementById('nav-search');
+            btn.classList.remove('text-slate-300', 'hover:bg-slate-800/60');
+            btn.classList.add('bg-indigo-600/20', 'text-indigo-400', 'border', 'border-indigo-500/30');
+        } else if (currentPath.startsWith('/stats')) {
+            const btn = document.getElementById('nav-stats');
+            btn.classList.remove('text-slate-300', 'hover:bg-slate-800/60');
+            btn.classList.add('bg-indigo-600/20', 'text-indigo-400', 'border', 'border-indigo-500/30');
+        }
+    </script>
+</body>
+</html>

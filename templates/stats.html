@@ -1,0 +1,182 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<!-- Dummy Data Fallback Warning Banner -->
+{% if is_dummy %}
+<div class="mb-8 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-300 flex items-start gap-3 shadow-lg shadow-amber-500/5">
+    <i data-lucide="alert-triangle" class="w-5 h-5 text-amber-400 mt-0.5 flex-shrink-0"></i>
+    <div>
+        <h4 class="font-semibold text-sm">로컬 테스트 모드 (구글 시트 연동 전)</h4>
+        <p class="text-xs text-amber-400/80 mt-1 break-keep">현재 구글 API 키(`credentials.json`)가 없거나 시트 연동 오류로 인해 <strong>테스트용 데모 데이터</strong>의 통계가 표시되고 있습니다.</p>
+    </div>
+</div>
+{% endif %}
+
+<!-- Dashboard Header -->
+<div class="mb-10 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+    <div>
+        <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20 mb-3">
+            <i data-lucide="activity" class="w-3.5 h-3.5"></i>
+            실시간 데이터 분석 뷰
+        </span>
+        <h1 class="text-2xl sm:text-3xl font-extrabold font-outfit tracking-tight text-white">
+            탁우회 <span class="bg-gradient-to-r from-rose-400 to-indigo-400 bg-clip-text text-transparent">통계 대시보드</span>
+        </h1>
+        <p class="text-slate-400 text-sm mt-1 break-keep">부수별 인원 분포와 전형별 구성을 직관적으로 확인하세요.</p>
+    </div>
+    
+    <!-- Quick Stat Cards -->
+    <div class="flex gap-4">
+        <div class="glass-panel px-6 py-4 rounded-2xl flex items-center gap-4">
+            <div class="p-3 bg-indigo-500/10 rounded-xl text-indigo-400">
+                <i data-lucide="users" class="w-6 h-6"></i>
+            </div>
+            <div>
+                <p class="text-xs text-slate-400">전체 등록 인원</p>
+                <p class="text-2xl font-black font-outfit text-white">{{ total_count }}명</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+    
+    <!-- Left Column: Visual Charts & Analytics -->
+    <div class="lg:col-span-1 flex flex-col gap-8">
+        
+        <!-- 1. Division Distribution Progress Bars -->
+        <div class="glass-panel p-6 rounded-2xl">
+            <div class="flex items-center gap-2 mb-6">
+                <i data-lucide="bar-chart-horizontal" class="w-5 h-5 text-indigo-400"></i>
+                <h3 class="font-bold text-white text-base">부수별 인원 분포</h3>
+            </div>
+            
+            <div class="space-y-5">
+                {% for div in div_stats %}
+                <div>
+                    <div class="flex justify-between items-center text-xs font-medium mb-2">
+                        <span class="text-slate-200 flex items-center gap-1">
+                            <span class="inline-block w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+                            {{ div.division }}
+                        </span>
+                        <span class="text-slate-400">
+                            <strong class="text-white">{{ div.count }}명</strong> ({{ div.ratio }}%)
+                        </span>
+                    </div>
+                    <!-- Progress Bar -->
+                    <div class="w-full h-3 bg-slate-900 rounded-full overflow-hidden border border-slate-800">
+                        <div class="h-full bg-gradient-to-r from-indigo-600 to-indigo-400 rounded-full transition-all duration-1000" 
+                             style="width: {{ div.ratio }}%;"></div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- 2. Racket Style Distribution -->
+        <div class="glass-panel p-6 rounded-2xl">
+            <div class="flex items-center gap-2 mb-6">
+                <i data-lucide="pie-chart" class="w-5 h-5 text-rose-400"></i>
+                <h3 class="font-bold text-white text-base">라켓 전형 구성비</h3>
+            </div>
+            
+            <div class="space-y-4">
+                {% for racket in racket_stats %}
+                <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800/40 flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        {% if racket.racket == '쉐이크' %}
+                        <div class="w-8 h-8 rounded-lg bg-sky-500/10 flex items-center justify-center text-sky-400">
+                            <i data-lucide="swords" class="w-4 h-4"></i>
+                        </div>
+                        <div>
+                            <p class="text-sm font-bold text-white">{{ racket.racket }}</p>
+                            <p class="text-[11px] text-slate-500">Shakehand</p>
+                        </div>
+                        {% elif racket.racket == '펜홀더' %}
+                        <div class="w-8 h-8 rounded-lg bg-rose-500/10 flex items-center justify-center text-rose-400">
+                            <i data-lucide="lollipop" class="w-4 h-4"></i>
+                        </div>
+                        <div>
+                            <p class="text-sm font-bold text-white">{{ racket.racket }}</p>
+                            <p class="text-[11px] text-slate-500">Penholder</p>
+                        </div>
+                        {% else %}
+                        <div class="w-8 h-8 rounded-lg bg-slate-500/10 flex items-center justify-center text-slate-400">
+                            <i data-lucide="help-circle" class="w-4 h-4"></i>
+                        </div>
+                        <div>
+                            <p class="text-sm font-bold text-white">{{ racket.racket }}</p>
+                            <p class="text-[11px] text-slate-500">기타 전형</p>
+                        </div>
+                        {% endif %}
+                    </div>
+                    
+                    <div class="text-right">
+                        <span class="text-base font-black font-outfit text-white">{{ racket.count }}명</span>
+                        <span class="block text-[11px] text-slate-400 font-medium">{{ racket.ratio }}%</span>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        
+    </div>
+
+    <!-- Right Column: Grouped List -->
+    <div class="lg:col-span-2">
+        <div class="glass-panel p-6 rounded-2xl h-full">
+            <div class="flex items-center justify-between mb-6 border-b border-slate-800/80 pb-4">
+                <div class="flex items-center gap-2">
+                    <i data-lucide="layers" class="w-5 h-5 text-purple-400"></i>
+                    <h3 class="font-bold text-white text-base">부수별 그룹 명단</h3>
+                </div>
+                <span class="text-xs text-slate-400">부수 오름차순 및 이름 정렬</span>
+            </div>
+
+            <div class="space-y-6">
+                {% for div, div_members in grouped_members.items() %}
+                <div class="border border-slate-800/50 rounded-xl overflow-hidden bg-slate-900/20">
+                    <!-- Group Header -->
+                    <div class="px-4 py-3.5 bg-slate-900/80 border-b border-slate-800/80 flex items-center justify-between">
+                        <span class="font-bold text-white flex items-center gap-2">
+                            <span class="px-2 py-0.5 rounded text-xs bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">{{ div }}</span>
+                            <span>그룹</span>
+                        </span>
+                        <span class="text-xs text-slate-400">총 <strong class="text-white">{{ div_members|length }}</strong>명</span>
+                    </div>
+                    
+                    <!-- Group Members List -->
+                    <div class="p-3">
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {% for m in div_members %}
+                            <div class="p-3 bg-slate-950/40 rounded-lg border border-slate-900 flex items-center justify-between hover:border-slate-800 transition-colors">
+                                <span class="text-sm font-bold text-white flex items-center gap-1.5">
+                                    <i data-lucide="user" class="w-3.5 h-3.5 text-slate-500"></i>
+                                    {{ m.이름 }}
+                                </span>
+                                
+                                {% if m.라켓 == '쉐이크' %}
+                                <span class="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-sky-500/10 text-sky-400 border border-sky-500/20">
+                                    {{ m.라켓 }}
+                                </span>
+                                {% elif m.라켓 == '펜홀더' %}
+                                <span class="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                                    {{ m.라켓 }}
+                                </span>
+                                {% else %}
+                                <span class="px-2.5 py-0.5 rounded-full text-[10px] bg-slate-800 text-slate-400 border border-slate-700">
+                                    {{ m.라켓 }}
+                                </span>
+                                {% endif %}
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    
+</div>
+{% endblock %}

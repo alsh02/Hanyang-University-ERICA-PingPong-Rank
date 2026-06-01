@@ -1,0 +1,14 @@
+{
+    "python.defaultInterpreterPath": "${workspaceFolder}/venv/bin/python",
+    "python.pythonPath": "${workspaceFolder}/venv/bin/python",
+    "python.terminal.activateEnvInTriggeredTerminal": true,
+    "python.analysis.exclude": [
+        "/Library/Developer/CommandLineTools/**"
+    ],
+    "jupyter.kernels.filter": [
+        {
+            "path": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9",
+            "type": "python"
+        }
+    ]
+}
