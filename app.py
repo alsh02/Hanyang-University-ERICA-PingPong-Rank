@@ -47,7 +47,7 @@ def normalize_racket(racket):
     racket_str = str(racket).strip().lower()
     if '세이크' in racket_str or '쉐이크' in racket_str or 'shake' in racket_str:
         return '쉐이크'
-    if '펜홀더' in racket_str or '펜' in racket_str or 'pen' in racket_str:
+    if '펜' in racket_str or '팬' in racket_str or 'pen' in racket_str:
         return '펜홀더'
     return racket_str.capitalize()  # 원래 값 유지하되 첫글자 대문자화
 

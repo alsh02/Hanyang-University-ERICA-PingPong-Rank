@@ -9,5 +9,9 @@ __pycache__/
 venv/
 .env
 
+# 회원 데이터 (개인정보 보호를 위해 깃 제외)
+data/
+*.csv
+
 # OS files
 .DS_Store
