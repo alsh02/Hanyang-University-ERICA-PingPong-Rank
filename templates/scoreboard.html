@@ -311,6 +311,8 @@
     }
 
     function startMatch() {
+        document.activeElement?.blur?.();   // 입력칸에 커서가 남아 있으면 경기 중에도 키보드·보안 경고가 따라온다
+        if (resumeFullscreen) { resumeFullscreen = false; enterFullscreen(); }
         state.phase = 'playing';
         state.points = [0, 0];
         state.games = [];
@@ -341,6 +343,37 @@
             el.textContent = state.players[side].name || `선수 ${side === 0 ? 'A' : 'B'}`;
         });
         renderHeadToHead();
+    }
+
+    // ---------- 전체화면 ----------
+    // 사파리(아이패드 포함)는 전체화면에서 글자를 입력하면 '전체 화면인 상태에서 입력하는 것 같습니다' 경고를
+    // 띄운다. 주소창이 가려진 화면에서의 입력을 막기 위한 장치라 끌 수 없으므로, 이름을 입력할 때는
+    // 전체화면을 잠시 풀고 경기를 시작할 때 다시 들어간다.
+    let resumeFullscreen = false;
+    const fullscreenElement = () => document.fullscreenElement || document.webkitFullscreenElement;
+
+    function enterFullscreen() {
+        const el = document.documentElement;
+        const request = el.requestFullscreen || el.webkitRequestFullscreen;
+        if (!request) return showToast('이 브라우저에서는 전체화면을 지원하지 않습니다');
+        Promise.resolve(request.call(el)).catch(() => showToast('이 브라우저에서는 전체화면을 지원하지 않습니다'));
+    }
+
+    function exitFullscreen() {
+        const exit = document.exitFullscreen || document.webkitExitFullscreen;
+        if (fullscreenElement() && exit) Promise.resolve(exit.call(document)).catch(() => {});
+    }
+
+    // 전체화면이 완전히 풀린 뒤에 입력칸으로 커서를 옮긴다
+    function leaveFullscreenThenFocus(input) {
+        resumeFullscreen = true;
+        const focusInput = () => {
+            ['fullscreenchange', 'webkitfullscreenchange'].forEach((type) => document.removeEventListener(type, focusInput));
+            input.focus();
+        };
+        ['fullscreenchange', 'webkitfullscreenchange'].forEach((type) => document.addEventListener(type, focusInput));
+        exitFullscreen();
+        showToast('이름을 입력하는 동안 전체화면을 잠시 해제합니다');
     }
 
     // ---------- 선수 선택: 이름을 입력하면 아래 목록에서 고른다 ----------
@@ -391,6 +424,7 @@
             state.players[side] = { name: member.이름, division: member.부수 || '미지정' };
             sync();
             close();
+            input.blur();   // 아이패드에서 키보드를 내린다
             syncSetup();
         }
 
@@ -406,6 +440,11 @@
             clearButton.hidden = !state.players[side].name;
         }
 
+        input.addEventListener('pointerdown', (event) => {
+            if (!fullscreenElement()) return;
+            event.preventDefault();   // 전체화면이 풀린 뒤에 커서가 들어가도록 기본 동작을 미룬다
+            leaveFullscreenThenFocus(input);
+        });
         input.addEventListener('focus', () => { input.select(); open(''); });
         input.addEventListener('input', () => {
             if (state.players[side].name && input.value !== state.players[side].name) clearPlayer();
@@ -526,15 +565,17 @@
     });
 
     $('fullscreen-button').addEventListener('click', () => {
-        if (document.fullscreenElement) document.exitFullscreen();
-        else document.documentElement.requestFullscreen?.().catch(() => showToast('이 브라우저에서는 전체화면을 지원하지 않습니다'));
+        if (fullscreenElement()) { resumeFullscreen = false; exitFullscreen(); }
+        else { resumeFullscreen = false; enterFullscreen(); }
     });
-    document.addEventListener('fullscreenchange', () => {
-        const icon = document.fullscreenElement ? 'minimize' : 'maximize';
+    ['fullscreenchange', 'webkitfullscreenchange'].forEach((type) => document.addEventListener(type, () => {
+        // 키보드가 올라온 채로 전체화면에 들어가면 경고가 뜨므로 입력칸의 커서를 내려 둔다
+        if (fullscreenElement() && document.activeElement?.matches?.('input')) document.activeElement.blur();
+        const icon = fullscreenElement() ? 'minimize' : 'maximize';
         $('fullscreen-button').querySelector('i, svg')?.remove();
         $('fullscreen-button').insertAdjacentHTML('afterbegin', `<i data-lucide="${icon}" class="h-4 w-4"></i>`);
         window.lucide && lucide.createIcons();
-    });
+    }));
 
     syncSetup();
     render();
