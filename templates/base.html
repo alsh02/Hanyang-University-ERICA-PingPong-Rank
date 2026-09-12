@@ -7,8 +7,8 @@
     <!-- SEO Meta Tags -->
     <meta name="description" content="대학 탁구 동아리 '탁우회' 부원들의 이름, 부수, 라켓(전형) 정보를 실시간으로 검색하고 통계 분포를 시각적으로 확인하는 대시보드 시스템입니다.">
     <meta name="keywords" content="탁우회, 탁구, 탁구 동아리, 탁구 부수, 탁구 대시보드, 쉐이크, 펜홀더">
-    <meta name="theme-color" content="#f8fafc" media="(prefers-color-scheme: light)">
-    <meta name="theme-color" content="#020617" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#09090b" media="(prefers-color-scheme: dark)">
     <!-- Open Graph (카카오톡 등 링크 공유 미리보기) -->
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="POWERDRIVE RANK">
@@ -31,6 +31,8 @@
             darkMode: 'class',
             theme: {
                 extend: {
+                    // 검정 배경에서 채도가 튀지 않도록 다크 모드 전용으로 쓰는 낮은 채도의 빨강
+                    colors: { rubber: '#c0403a' },
                     fontFamily: {
                         sans: ['Pretendard Variable', 'Pretendard', '-apple-system', 'BlinkMacSystemFont',
                                'system-ui', 'Segoe UI', 'Apple SD Gothic Neo', 'Malgun Gothic', 'sans-serif'],
@@ -65,10 +67,10 @@
         }
     </style>
 </head>
-<body class="flex min-h-screen flex-col bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100">
+<body class="flex min-h-screen flex-col bg-zinc-50 text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100">
 
     <!-- Top Header / Navigation -->
-    <header class="sticky top-0 z-50 border-b border-slate-200 bg-slate-50/85 backdrop-blur dark:border-slate-800 dark:bg-slate-950/85">
+    <header class="sticky top-0 z-50 border-b border-zinc-200 bg-zinc-50/85 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/85">
         <div class="mx-auto flex h-16 max-w-6xl items-center justify-between gap-2 px-4 sm:px-6">
             <!-- Logo -->
             <a href="{{ url_for('index') }}" class="flex flex-shrink-0 items-center gap-2.5">
@@ -85,7 +87,7 @@
                     {% for endpoint, icon, label in nav_items %}
                     {% set is_active = request.endpoint == endpoint %}
                     <a href="{{ url_for(endpoint) }}" {% if is_active %}aria-current="page"{% endif %}
-                       class="flex h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 text-sm font-semibold transition-colors sm:px-3 {{ 'bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-300' if is_active else 'text-slate-500 hover:bg-slate-200/70 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100' }}">
+                       class="flex h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 text-sm font-semibold transition-colors sm:px-3 {{ 'bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-300' if is_active else 'text-zinc-500 hover:bg-zinc-200/70 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100' }}">
                         <i data-lucide="{{ icon }}" class="h-4 w-4 flex-shrink-0"></i>
                         <span class="sr-only sm:not-sr-only">{{ label }}</span>
                     </a>
@@ -94,7 +96,7 @@
 
                 <!-- Theme Toggle -->
                 <button id="theme-toggle" type="button" aria-label="밝은 테마와 어두운 테마 전환"
-                        class="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-200/70 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100">
+                        class="flex h-9 w-9 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-200/70 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100">
                     <i data-lucide="moon" class="h-4 w-4 dark:hidden"></i>
                     <i data-lucide="sun" class="hidden h-4 w-4 dark:block"></i>
                 </button>
@@ -108,8 +110,8 @@
     </main>
 
     <!-- Footer -->
-    <footer class="border-t border-slate-200 dark:border-slate-800">
-        <div class="mx-auto max-w-6xl px-4 py-6 text-center text-xs text-slate-500 sm:px-6 dark:text-slate-400">
+    <footer class="border-t border-zinc-200 dark:border-zinc-800">
+        <div class="mx-auto max-w-6xl px-4 py-6 text-center text-xs text-zinc-500 sm:px-6 dark:text-zinc-400">
             © 한양대학교 ERICA 탁구 동아리 탁우회
         </div>
     </footer>
