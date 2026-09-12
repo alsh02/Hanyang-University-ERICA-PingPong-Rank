@@ -90,7 +90,7 @@ def start_gui():
     from tkinter import filedialog, messagebox, ttk
     
     root = tk.Tk()
-    root.title("POWERDRIVE RANK - 회원 데이터 업로드")
+    root.title("POWERDRIVE HANYANG - 회원 데이터 업로드")
     root.geometry("540x290")
     root.resizable(False, False)
     root.configure(bg="#0f172a")  # Dark Theme bg slate-900
@@ -102,7 +102,7 @@ def start_gui():
     style.configure("TRadiobutton", background="#0f172a", foreground="#cbd5e1", font=("NanumGothic", 10))
     
     # Title Label
-    title_label = tk.Label(root, text="POWERDRIVE RANK 업로드 도구", font=("NanumGothic", 15, "bold"), bg="#0f172a", fg="#818cf8")
+    title_label = tk.Label(root, text="POWERDRIVE HANYANG 업로드 도구", font=("NanumGothic", 15, "bold"), bg="#0f172a", fg="#818cf8")
     title_label.pack(pady=15)
     
     # File Select Frame

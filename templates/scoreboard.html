@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 
-{% block title %}점수판 · POWERDRIVE RANK{% endblock %}
+{% block title %}점수판 · POWERDRIVE HANYANG{% endblock %}
 
 {% block content %}
 <div id="board" class="relative flex h-[100dvh] select-none flex-col overflow-hidden bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
@@ -48,15 +48,20 @@
                     <i data-lucide="arrow-left-right" class="h-4 w-4"></i>
                 </button>
                 {% endif %}
-                <div>
+                <div class="relative">
                     <label for="player-{{ side }}" class="mb-1.5 block text-xs font-semibold text-zinc-500 dark:text-zinc-400">선수 {{ 'A' if side == 0 else 'B' }}</label>
-                    <select id="player-{{ side }}" data-player="{{ side }}"
-                            class="h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-900 focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/30 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100">
-                        <option value="">선수 선택</option>
-                        {% for member in members %}
-                        <option value="{{ member.이름 }}" data-division="{{ member.부수 or '미지정' }}">{{ member.이름 }} · {{ member.부수 or '미지정' }}</option>
-                        {% endfor %}
-                    </select>
+                    <input id="player-{{ side }}" data-player="{{ side }}" type="text" role="combobox"
+                           aria-expanded="false" aria-controls="player-list-{{ side }}" aria-autocomplete="list"
+                           autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="done"
+                           placeholder="이름 또는 초성"
+                           class="h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 pr-9 text-sm font-semibold text-zinc-900 placeholder-zinc-400 focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/30 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder-zinc-500">
+                    <button type="button" data-clear="{{ side }}" aria-label="선수 {{ 'A' if side == 0 else 'B' }} 선택 해제" hidden
+                            class="absolute bottom-0 right-0 flex h-11 w-9 items-center justify-center text-zinc-400 transition-colors hover:text-red-600 dark:hover:text-red-400">
+                        <i data-lucide="x" class="h-4 w-4"></i>
+                    </button>
+                    <ul id="player-list-{{ side }}" data-list="{{ side }}" role="listbox" hidden
+                        aria-label="선수 {{ 'A' if side == 0 else 'B' }} 후보"
+                        class="absolute left-0 right-0 top-full z-30 mt-1 max-h-60 overflow-y-auto overscroll-contain rounded-xl border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"></ul>
                 </div>
                 {% endfor %}
             </div>
@@ -170,9 +175,12 @@
 {% endblock %}
 
 {% block scripts %}
+<!-- 이름·초성 검색 규칙 (검색 페이지와 공용) -->
+<script src="{{ url_for('static', filename='hangul-search.js') }}"></script>
 <script>
 (() => {
     const CAN_SAVE = {{ 'true' if can_save else 'false' }};
+    const MEMBERS = {{ members | tojson }};
     let headToHead = {{ head_to_head | tojson }};
 
     // 11점은 2점마다, 21점은 5점마다 서브가 넘어가고, 듀스(10-10 / 20-20)부터는 1점마다 넘어간다
@@ -182,7 +190,6 @@
     const setup = $('setup'), match = $('match'), result = $('result'), toast = $('toast');
     const homeLink = $('home-link');
     const sides = [...match.querySelectorAll('[data-side]')];
-    const selects = [...setup.querySelectorAll('[data-player]')];
 
     const state = {
         phase: 'setup',
@@ -336,17 +343,107 @@
         renderHeadToHead();
     }
 
-    selects.forEach((select, side) => {
-        select.addEventListener('change', () => {
-            const option = select.selectedOptions[0];
-            state.players[side] = { name: select.value, division: option?.dataset.division || '' };
+    // ---------- 선수 선택: 이름을 입력하면 아래 목록에서 고른다 ----------
+    const { matchName } = window.HangulSearch;
+    const escapeHtml = (text) => text.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+
+    function createPicker(side) {
+        const input = $(`player-${side}`);
+        const list = $(`player-list-${side}`);
+        const clearButton = setup.querySelector(`[data-clear="${side}"]`);
+        let options = [];   // 지금 목록에 떠 있는 부원
+        let active = -1;    // 키보드로 짚고 있는 항목
+
+        function close() {
+            list.hidden = true;
+            input.setAttribute('aria-expanded', 'false');
+            input.removeAttribute('aria-activedescendant');
+            active = -1;
+        }
+
+        function open(query) {
+            const taken = state.players[side ^ 1].name;   // 반대편이 고른 선수는 빼고 보여 준다
+            options = MEMBERS.filter((m) => m.이름 !== taken && (!query || matchName(m.이름, query)));
+            list.innerHTML = options.length
+                ? options.map((m, i) => `<li role="option" id="player-${side}-option-${i}" data-index="${i}" aria-selected="false"
+                       class="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm hover:bg-zinc-100 aria-[selected=true]:bg-red-50 dark:hover:bg-zinc-800 dark:aria-[selected=true]:bg-red-500/15">
+                       <span class="font-semibold">${escapeHtml(m.이름)}</span>
+                       <span class="text-xs font-medium text-zinc-400 dark:text-zinc-500">${escapeHtml(m.부수 || '미지정')}</span>
+                   </li>`).join('')
+                : '<li class="px-3 py-2 text-sm text-zinc-400 dark:text-zinc-500">일치하는 부원이 없습니다</li>';
+            list.hidden = false;
+            input.setAttribute('aria-expanded', 'true');
+            setActive(options.length ? 0 : -1);
+        }
+
+        function setActive(index) {
+            active = index;
+            [...list.querySelectorAll('[data-index]')].forEach((el, i) => el.setAttribute('aria-selected', String(i === index)));
+            if (index < 0) return input.removeAttribute('aria-activedescendant');
+            const current = list.querySelector(`[data-index="${index}"]`);
+            input.setAttribute('aria-activedescendant', current.id);
+            current.scrollIntoView({ block: 'nearest' });
+        }
+
+        function choose(index) {
+            const member = options[index];
+            if (!member) return;
+            state.players[side] = { name: member.이름, division: member.부수 || '미지정' };
+            sync();
+            close();
             syncSetup();
+        }
+
+        function clearPlayer() {
+            state.players[side] = { name: '', division: '' };
+            sync();
+            syncSetup();
+        }
+
+        // 화면을 state에 맞춘다 (선수 교대·초기화에서도 사용)
+        function sync() {
+            input.value = state.players[side].name;
+            clearButton.hidden = !state.players[side].name;
+        }
+
+        input.addEventListener('focus', () => { input.select(); open(''); });
+        input.addEventListener('input', () => {
+            if (state.players[side].name && input.value !== state.players[side].name) clearPlayer();
+            open(input.value.trim());
         });
-    });
+        input.addEventListener('blur', () => { sync(); close(); });
+        input.addEventListener('keydown', (event) => {
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault();
+                if (list.hidden) return open(input.value.trim());
+                if (!options.length) return;
+                setActive((active + (event.key === 'ArrowDown' ? 1 : options.length - 1)) % options.length);
+            } else if (event.key === 'Enter') {
+                event.preventDefault();
+                choose(active);
+            } else if (event.key === 'Escape') {
+                sync();
+                close();
+            }
+        });
+
+        // 목록을 누를 때 입력칸의 포커스가 먼저 풀리지 않도록 mousedown을 막는다
+        list.addEventListener('mousedown', (event) => event.preventDefault());
+        list.addEventListener('click', (event) => {
+            const item = event.target.closest('[data-index]');
+            if (item) choose(Number(item.dataset.index));
+        });
+        clearButton.addEventListener('click', () => { clearPlayer(); input.focus(); });
+
+        return { sync };
+    }
+
+    const pickers = [0, 1].map(createPicker);
 
     $('swap-players').addEventListener('click', () => {
-        [selects[0].value, selects[1].value] = [selects[1].value, selects[0].value];
-        selects.forEach((s) => s.dispatchEvent(new Event('change')));
+        state.players.reverse();
+        pickers.forEach((picker) => picker.sync());
+        syncSetup();
     });
 
     setup.addEventListener('click', (event) => {
