@@ -7,7 +7,7 @@ import time
 from collections import Counter, deque
 from datetime import datetime, timedelta, timezone
 # pyrefly: ignore [missing-import]
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request, url_for
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 # 정적 파일은 Vercel이 CDN에서 직접 서빙하도록 public/ 아래에 둔다 (주소는 /static/... 그대로)
@@ -88,7 +88,7 @@ def member_sort_key(member):
     return (division_sort_key(member["부수"]), member["이름"])
 
 # ---------------------------------------------------------------------------
-# 검색 규칙 (templates/index.html의 즉시 검색 스크립트도 같은 규칙을 사용)
+# 검색 규칙 (templates/search.html의 즉시 검색 스크립트도 같은 규칙을 사용)
 # ---------------------------------------------------------------------------
 
 # 한글 자모 분해 테이블 (초성 19 · 중성 21 · 종성 28).
@@ -387,6 +387,34 @@ def compress_html(response):
 
 @app.route("/", methods=["GET"])
 def index():
+    # 동아리 메인 화면: 검색·대시보드·점수판으로 가는 허브
+    if request.args.get("query") or request.args.get("filter"):
+        # 예전에 공유된 검색 링크(/?filter=..&query=..)는 검색 페이지로 넘긴다
+        return redirect(url_for("search", **request.args.to_dict()), code=301)
+
+    members, is_dummy = get_sheet_data()
+    racket_counts = Counter(m["라켓"] for m in members if m["라켓"])
+    recent = [
+        {
+            "일시": r["일시"],
+            "선수A": r["선수A"], "선수B": r["선수B"],
+            "점수": f'{r["A게임"]} : {r["B게임"]}',
+            "승자": r["승자"],
+        }
+        for r in get_match_records()[-5:][::-1]
+    ]
+
+    return render_template(
+        "home.html",
+        total_count=len(members),
+        division_count=len({m["부수"] for m in members if m["부수"]}),
+        racket_stats=[(racket, racket_counts[racket]) for racket in RACKET_ORDER if racket_counts[racket]],
+        recent_matches=recent,
+        is_dummy=is_dummy
+    )
+
+@app.route("/search", methods=["GET"])
+def search():
     search_filter = request.args.get("filter", "이름")  # 기본값: 이름
     if search_filter not in SEARCH_FIELDS:
         search_filter = "이름"
@@ -402,7 +430,7 @@ def index():
     cards = [(m, bool(search_query) and matcher(m[search_filter], search_query)) for m in members]
 
     return render_template(
-        "index.html",
+        "search.html",
         cards=cards,
         match_count=sum(1 for _, matched in cards if matched),
         total_count=len(members),

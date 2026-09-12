@@ -5,15 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}POWERDRIVE RANK{% endblock %}</title>
     <!-- SEO Meta Tags -->
-    <meta name="description" content="대학 탁구 동아리 '탁우회' 부원들의 이름, 부수, 라켓(전형) 정보를 실시간으로 검색하고 통계 분포를 시각적으로 확인하는 대시보드 시스템입니다.">
-    <meta name="keywords" content="탁우회, 탁구, 탁구 동아리, 탁구 부수, 탁구 대시보드, 쉐이크, 펜홀더">
+    <meta name="description" content="한양대학교 ERICA 탁구 동아리 탁우회 사이트입니다. 부원 부수 검색, 부수별 통계 대시보드, 경기 점수판을 제공합니다.">
+    <meta name="keywords" content="탁우회, 탁구, 탁구 동아리, 탁구 부수, 탁구 점수판, 탁구 대시보드, 쉐이크, 펜홀더">
     <meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#09090b" media="(prefers-color-scheme: dark)">
     <!-- Open Graph (카카오톡 등 링크 공유 미리보기) -->
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="POWERDRIVE RANK">
-    <meta property="og:title" content="POWERDRIVE RANK · 탁우회 부수 검색">
-    <meta property="og:description" content="한양대학교 ERICA 탁구 동아리 탁우회 부원들의 부수와 라켓 전형을 바로 검색하고, 부수별 전력 분포를 확인하세요.">
+    <meta property="og:title" content="탁우회 · POWERDRIVE RANK">
+    <meta property="og:description" content="한양대학교 ERICA 탁구 동아리 탁우회. 부원 부수 검색, 통계 대시보드, 경기 점수판을 한곳에서.">
     <meta property="og:image" content="{{ url_for('static', filename='og-image.jpg', _external=True) }}">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
@@ -83,7 +83,7 @@
 
             <div class="flex items-center gap-1">
                 <!-- Navigation Tabs -->
-                {% set nav_items = [('index', 'search', '부원 검색'), ('stats', 'bar-chart-3', '대시보드'), ('scoreboard', 'trophy', '점수판')] %}
+                {% set nav_items = [('search', 'search', '부원 검색'), ('stats', 'bar-chart-3', '대시보드'), ('scoreboard', 'trophy', '점수판')] %}
                 <nav class="flex items-center gap-1">
                     {% for endpoint, icon, label in nav_items %}
                     {% set is_active = request.endpoint == endpoint %}
