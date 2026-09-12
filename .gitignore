@@ -13,5 +13,8 @@ venv/
 data/
 *.csv
 
+# 배포 도구
+.vercel
+
 # OS files
 .DS_Store

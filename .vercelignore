@@ -1,0 +1,4 @@
+# 배포에 필요 없는 문서 및 개발용 파일 (정적 파일은 public/ 아래에 있어 영향 없음)
+/pingpong_rank_development_specification_v2.pdf
+/탁우회 부수 검색 사이트 제안서.png
+/.vscode

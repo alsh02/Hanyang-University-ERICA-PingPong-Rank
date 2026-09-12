@@ -1,4 +1,5 @@
 import gzip
+import json
 import os
 import re
 import threading
@@ -8,7 +9,8 @@ from collections import Counter
 from flask import Flask, render_template, request
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-app = Flask(__name__)
+# 정적 파일은 Vercel이 CDN에서 직접 서빙하도록 public/ 아래에 둔다 (주소는 /static/... 그대로)
+app = Flask(__name__, static_folder="public/static", static_url_path="/static")
 app.secret_key = "pingpong_rank_secret_key_for_flash"
 # Render 프록시 뒤에서도 https 절대 URL(링크 미리보기용 og:image 등)을 만들 수 있도록 설정
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1)
@@ -162,11 +164,19 @@ def get_credentials_path():
     cred_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or "credentials.json"
     return cred_path if os.path.exists(cred_path) else None
 
-def create_sheet_client(cred_path):
+def has_credentials():
+    # 파일을 둘 수 없는 서버리스 환경(Vercel)에서는 환경변수 GOOGLE_CREDENTIALS_JSON에 키 JSON 본문을 넣는다
+    return bool(os.environ.get("GOOGLE_CREDENTIALS_JSON")) or get_credentials_path() is not None
+
+def create_sheet_client():
     import gspread
 
     # 서비스 계정 키(JSON)로 인증 (Sheets + Drive 권한)
-    client = gspread.service_account(filename=cred_path)
+    key_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+    if key_json:
+        client = gspread.service_account_from_dict(json.loads(key_json))
+    else:
+        client = gspread.service_account(filename=get_credentials_path())
     client.set_timeout(SHEET_TIMEOUT)
     return client
 
@@ -211,10 +221,10 @@ _sheet_lock = threading.Lock()
 _sheet_client = None
 _sheet_cache = {"members": None, "expires_at": 0.0}
 
-def fetch_sheet_members(cred_path):
+def fetch_sheet_members():
     global _sheet_client
     if _sheet_client is None:
-        _sheet_client = create_sheet_client(cred_path)
+        _sheet_client = create_sheet_client()
     # get_all_records()는 '0'을 숫자 0으로 바꾸고 헤더가 중복되면 실패하므로 원본 문자열로 받는다
     rows = _sheet_client.open(SHEET_NAME).sheet1.get_all_values()
     return parse_sheet_rows(rows)
@@ -222,8 +232,7 @@ def fetch_sheet_members(cred_path):
 def get_sheet_data():
     # (부원 목록, 더미 데이터 여부)를 반환한다.
     # 시트는 SHEET_CACHE_TTL초 동안 캐시하고, 연동 오류가 나면 마지막으로 불러온 데이터를 유지한다.
-    cred_path = get_credentials_path()
-    if not cred_path:
+    if not has_credentials():
         # 환경 변수 및 파일이 없으면 더미 데이터 반환
         return DUMMY_DATA, True
 
@@ -231,7 +240,7 @@ def get_sheet_data():
         now = time.monotonic()
         if now >= _sheet_cache["expires_at"]:
             try:
-                _sheet_cache["members"] = fetch_sheet_members(cred_path)
+                _sheet_cache["members"] = fetch_sheet_members()
                 _sheet_cache["expires_at"] = now + SHEET_CACHE_TTL
             except Exception as e:
                 app.logger.error("구글 시트 연동 오류 발생: %s", e)

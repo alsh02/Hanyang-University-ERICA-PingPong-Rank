@@ -19,3 +19,14 @@ POWERDRIVE RANK는 대학 탁구 동아리 운영진과 부원들이 모바일 �
    * 시트 입력 오타(예: `세이크`, `셰이크`, `팬홀더`, `3`, `0` 등)를 백엔드에서 자동으로 감지해 `쉐이크`, `펜홀더`, `3부`, `0부` 등으로 실시간 보정 정제하여 데이터의 신뢰성을 보장합니다.
 5. **회원 명단 일괄 업로드 매니저 (GUI & CLI 듀얼 지원)**:
    * 운영진을 위한 회원 데이터 일괄 등록 도구(`upload_members.py`)가 내장되어 있으며, GUI(데스크톱 창) 및 CLI 모드를 모두 지원합니다.
+
+---
+
+## 🚀 배포
+
+* **Vercel**: 저장소를 연결하면 `app.py`를 자동으로 인식합니다. 서버가 잠들지 않아 첫 접속이 빠르며, 리전은 서울(`icn1`)로 지정되어 있습니다.
+* **Render**: Build Command `pip install -r requirements.txt` / Start Command `gunicorn app:app`.
+* 구글 시트 연결은 아래 환경변수로 설정합니다.
+  * `GOOGLE_CREDENTIALS_JSON`: 서비스 계정 키 JSON **본문** (Vercel처럼 키 파일을 둘 수 없는 환경용)
+  * `GOOGLE_APPLICATION_CREDENTIALS`: 키 파일 경로 (Render의 Secret Files 등). 로컬에서는 프로젝트 루트의 `credentials.json`을 자동으로 찾습니다.
+  * `SHEET_CACHE_TTL`: 시트 캐시 유지 시간(초), 기본값 60
