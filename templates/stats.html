@@ -126,10 +126,10 @@
                     </span>
                 </div>
 
-                <!-- Group Members -->
-                <div class="grid grid-cols-2 gap-px bg-slate-200 sm:grid-cols-3 xl:grid-cols-4 dark:bg-slate-800">
+                <!-- Group Members (구분선은 칸의 테두리로 그려 마지막 줄 빈 자리에는 선이 남지 않게 한다) -->
+                <div class="-mb-px -mr-px grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4">
                     {% for m in g.members %}
-                    <div class="flex items-center justify-between gap-1.5 bg-white px-3 py-2 dark:bg-slate-900">
+                    <div class="flex items-center justify-between gap-1.5 border-b border-r border-slate-200 px-3 py-2 dark:border-slate-800">
                         <span class="truncate text-sm font-semibold">{{ m.이름 }}</span>
                         {% if m.라켓 == '쉐이크' %}
                         <span class="flex-shrink-0 rounded border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300">{{ m.라켓 }}</span>
@@ -140,17 +140,6 @@
                         {% endif %}
                     </div>
                     {% endfor %}
-                    {# 마지막 줄의 빈 칸도 같은 배경으로 채워 구분선 색이 드러나지 않게 한다 (열 수는 화면 폭에 따라 2·3·4) #}
-                    {% set member_count = g.members|length %}
-                    {% for _ in range((4 - member_count % 4) % 4) %}
-                    <div class="hidden bg-white xl:block dark:bg-slate-900"></div>
-                    {% endfor %}
-                    {% for _ in range((3 - member_count % 3) % 3) %}
-                    <div class="hidden bg-white sm:block xl:hidden dark:bg-slate-900"></div>
-                    {% endfor %}
-                    {% if member_count is odd %}
-                    <div class="bg-white sm:hidden dark:bg-slate-900"></div>
-                    {% endif %}
                 </div>
             </section>
             {% else %}
