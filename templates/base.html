@@ -69,6 +69,7 @@
 </head>
 <body class="flex min-h-screen flex-col bg-zinc-50 text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100">
 
+    {% if not fullscreen %}
     <!-- Top Header / Navigation -->
     <header class="sticky top-0 z-50 border-b border-zinc-200 bg-zinc-50/85 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/85">
         <div class="mx-auto flex h-16 max-w-6xl items-center justify-between gap-2 px-4 sm:px-6">
@@ -82,7 +83,7 @@
 
             <div class="flex items-center gap-1">
                 <!-- Navigation Tabs -->
-                {% set nav_items = [('index', 'search', '부원 검색'), ('stats', 'bar-chart-3', '대시보드')] %}
+                {% set nav_items = [('index', 'search', '부원 검색'), ('stats', 'bar-chart-3', '대시보드'), ('scoreboard', 'trophy', '점수판')] %}
                 <nav class="flex items-center gap-1">
                     {% for endpoint, icon, label in nav_items %}
                     {% set is_active = request.endpoint == endpoint %}
@@ -103,25 +104,29 @@
             </div>
         </div>
     </header>
+    {% endif %}
 
     <!-- Main Content -->
-    <main class="mx-auto w-full max-w-6xl flex-grow px-4 py-8 sm:px-6 sm:py-10">
+    <main class="{{ 'flex-grow' if fullscreen else 'mx-auto w-full max-w-6xl flex-grow px-4 py-8 sm:px-6 sm:py-10' }}">
         {% block content %}{% endblock %}
     </main>
 
+    {% if not fullscreen %}
     <!-- Footer -->
     <footer class="border-t border-zinc-200 dark:border-zinc-800">
         <div class="mx-auto max-w-6xl px-4 py-6 text-center text-xs text-zinc-500 sm:px-6 dark:text-zinc-400">
             © 한양대학교 ERICA 탁구 동아리 탁우회
         </div>
     </footer>
+    {% endif %}
 
     {% block scripts %}{% endblock %}
 
     <script>
         document.addEventListener('DOMContentLoaded', () => window.lucide && lucide.createIcons());
 
-        document.getElementById('theme-toggle').addEventListener('click', () => {
+        // 점수판처럼 헤더가 없는 화면도 있으므로 버튼이 있을 때만 연결
+        document.getElementById('theme-toggle')?.addEventListener('click', () => {
             const dark = document.documentElement.classList.toggle('dark');
             try { localStorage.setItem('theme', dark ? 'dark' : 'light'); } catch (e) {}
         });

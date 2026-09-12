@@ -4,9 +4,10 @@ import os
 import re
 import threading
 import time
-from collections import Counter
+from collections import Counter, deque
+from datetime import datetime, timedelta, timezone
 # pyrefly: ignore [missing-import]
-from flask import Flask, render_template, request
+from flask import Flask, jsonify, render_template, request
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 # 정적 파일은 Vercel이 CDN에서 직접 서빙하도록 public/ 아래에 둔다 (주소는 /static/... 그대로)
@@ -221,13 +222,15 @@ _sheet_lock = threading.Lock()
 _sheet_client = None
 _sheet_cache = {"members": None, "expires_at": 0.0}
 
-def fetch_sheet_members():
+def open_spreadsheet():
     global _sheet_client
     if _sheet_client is None:
         _sheet_client = create_sheet_client()
+    return _sheet_client.open(SHEET_NAME)
+
+def fetch_sheet_members():
     # get_all_records()는 '0'을 숫자 0으로 바꾸고 헤더가 중복되면 실패하므로 원본 문자열로 받는다
-    rows = _sheet_client.open(SHEET_NAME).sheet1.get_all_values()
-    return parse_sheet_rows(rows)
+    return parse_sheet_rows(open_spreadsheet().sheet1.get_all_values())
 
 def get_sheet_data():
     # (부원 목록, 더미 데이터 여부)를 반환한다.
@@ -251,6 +254,121 @@ def get_sheet_data():
         # 한 번도 불러오지 못했다면 더미 데이터 사용
         return DUMMY_DATA, True
     return members, False
+
+# ---------------------------------------------------------------------------
+# 경기 기록 (점수판에서 저장하는 선수 간 전적)
+# ---------------------------------------------------------------------------
+
+MATCH_SHEET_NAME = "경기기록"
+MATCH_HEADERS = ["일시", "선수A", "선수B", "A게임", "B게임", "승자", "형식", "상세"]
+POINT_TARGETS = (11, 21)  # 한 게임 목표 점수
+BEST_OF_OPTIONS = (3, 5)  # 3판 2선, 5판 3선
+MATCH_WRITE_LIMIT = 30  # 10분당 저장 허용 횟수 (공개 주소이므로 최소한의 남용 방지)
+KST = timezone(timedelta(hours=9))
+
+_match_cache = {"records": None, "expires_at": 0.0}
+_match_writes = deque()
+
+def parse_match_rows(rows):
+    # 경기기록 시트(첫 행은 헤더)를 기록 목록으로 변환
+    records = []
+    for row in rows[1:] if rows else []:
+        values = (list(row) + [""] * len(MATCH_HEADERS))[:len(MATCH_HEADERS)]
+        played_at, player_a, player_b, games_a, games_b, winner, fmt, detail = (str(v).strip() for v in values)
+        if not player_a or not player_b or not winner:
+            continue
+        records.append({
+            "일시": played_at, "선수A": player_a, "선수B": player_b,
+            "A게임": games_a, "B게임": games_b, "승자": winner, "형식": fmt, "상세": detail,
+        })
+    return records
+
+def fetch_match_records():
+    import gspread
+
+    try:
+        worksheet = open_spreadsheet().worksheet(MATCH_SHEET_NAME)
+    except gspread.WorksheetNotFound:
+        return []  # 아직 한 경기도 저장하지 않은 상태
+    return parse_match_rows(worksheet.get_all_values())
+
+def get_match_records():
+    # 경기 기록을 SHEET_CACHE_TTL초 동안 캐시해서 반환 (실패하면 마지막 기록 유지)
+    if not has_credentials():
+        return []
+
+    with _sheet_lock:
+        now = time.monotonic()
+        if now >= _match_cache["expires_at"]:
+            try:
+                _match_cache["records"] = fetch_match_records()
+                _match_cache["expires_at"] = now + SHEET_CACHE_TTL
+            except Exception as e:
+                app.logger.error("경기 기록 조회 오류 발생: %s", e)
+                _match_cache["expires_at"] = now + SHEET_RETRY_AFTER
+        return _match_cache["records"] or []
+
+def head_to_head_key(name_a, name_b):
+    # 두 선수의 전적 키 (이름 순서와 무관하게 같은 키)
+    return "|".join(sorted([name_a, name_b]))
+
+def build_head_to_head(records):
+    # {"김철수|홍길동": {"김철수": 3, "홍길동": 1}} 형태의 누적 전적
+    table = {}
+    for record in records:
+        pair = table.setdefault(head_to_head_key(record["선수A"], record["선수B"]), {})
+        pair[record["승자"]] = pair.get(record["승자"], 0) + 1
+    return table
+
+def validate_match(data, member_names):
+    # 점수판이 보낸 경기 결과를 검증해 시트에 저장할 행으로 만든다. (오류 메시지, 행) 반환
+    player_a = normalize_name(data.get("선수A"))
+    player_b = normalize_name(data.get("선수B"))
+    if player_a not in member_names or player_b not in member_names:
+        return "명단에 없는 선수입니다.", None
+    if player_a == player_b:
+        return "같은 선수끼리는 기록할 수 없습니다.", None
+
+    try:
+        target = int(data.get("형식"))
+        best_of = int(data.get("판수"))
+        games = [(int(g[0]), int(g[1])) for g in data.get("게임", [])]
+    except (TypeError, ValueError, IndexError):
+        return "경기 정보 형식이 올바르지 않습니다.", None
+
+    if target not in POINT_TARGETS or best_of not in BEST_OF_OPTIONS:
+        return "지원하지 않는 경기 방식입니다.", None
+    if not 1 <= len(games) <= best_of:
+        return "게임 수가 올바르지 않습니다.", None
+
+    needed = best_of // 2 + 1
+    wins = [0, 0]
+    for score_a, score_b in games:
+        high, low = max(score_a, score_b), min(score_a, score_b)
+        # 끝난 게임만 기록한다 (목표 점수 이상 + 2점 차)
+        if not (0 <= low < high <= 99 and high >= target and high - low >= 2):
+            return f"완료되지 않은 게임 점수가 있습니다. ({score_a}:{score_b})", None
+        wins[0 if score_a > score_b else 1] += 1
+    if max(wins) != needed or min(wins) >= needed:
+        return "승부가 확정되지 않은 경기입니다.", None
+
+    winner = player_a if wins[0] > wins[1] else player_b
+    detail = ", ".join(f"{a}:{b}" for a, b in games)
+    played_at = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
+    return None, [played_at, player_a, player_b, str(wins[0]), str(wins[1]), winner,
+                  f"{target}점 {best_of}판 {needed}선", detail]
+
+def append_match_row(row):
+    import gspread
+
+    spreadsheet = open_spreadsheet()
+    try:
+        worksheet = spreadsheet.worksheet(MATCH_SHEET_NAME)
+    except gspread.WorksheetNotFound:
+        # 첫 기록이면 시트를 만들고 헤더부터 넣는다 (명단 시트는 건드리지 않음)
+        worksheet = spreadsheet.add_worksheet(title=MATCH_SHEET_NAME, rows=1000, cols=len(MATCH_HEADERS))
+        worksheet.append_row(MATCH_HEADERS)
+    worksheet.append_row(row)
 
 @app.after_request
 def compress_html(response):
@@ -359,6 +477,54 @@ def stats():
         selected_division=selected_division,
         is_dummy=is_dummy
     )
+
+@app.route("/scoreboard", methods=["GET"])
+def scoreboard():
+    # 경기 중 사용하는 전체화면 점수판. 선수는 명단에서 고르고, 끝난 경기는 전적으로 누적한다.
+    members, is_dummy = get_sheet_data()
+    members = sorted(members, key=member_sort_key)
+
+    return render_template(
+        "scoreboard.html",
+        members=members,
+        head_to_head=build_head_to_head(get_match_records()),
+        point_targets=POINT_TARGETS,
+        best_of_options=BEST_OF_OPTIONS,
+        can_save=not is_dummy,
+        is_dummy=is_dummy,
+        fullscreen=True
+    )
+
+@app.route("/api/matches", methods=["POST"])
+def save_match():
+    # 점수판에서 끝난 경기를 '경기기록' 시트에 한 줄 추가한다.
+    members, is_dummy = get_sheet_data()
+    if is_dummy:
+        return jsonify({"error": "구글 시트에 연결되어 있지 않아 기록을 저장할 수 없습니다."}), 503
+
+    now = time.monotonic()
+    while _match_writes and now - _match_writes[0] > 600:
+        _match_writes.popleft()
+    if len(_match_writes) >= MATCH_WRITE_LIMIT:
+        return jsonify({"error": "저장 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요."}), 429
+
+    error, row = validate_match(request.get_json(silent=True) or {}, {m["이름"] for m in members})
+    if error:
+        return jsonify({"error": error}), 400
+
+    try:
+        append_match_row(row)
+    except Exception as e:
+        app.logger.error("경기 기록 저장 오류 발생: %s", e)
+        return jsonify({"error": "기록 저장에 실패했습니다. 잠시 후 다시 시도해 주세요."}), 502
+
+    _match_writes.append(now)
+    with _sheet_lock:
+        # 방금 저장한 경기를 캐시에도 반영해 전적이 바로 갱신되게 한다
+        records = list(_match_cache["records"] or [])
+        records.append(dict(zip(MATCH_HEADERS, row)))
+        _match_cache["records"] = records
+    return jsonify({"head_to_head": build_head_to_head(get_match_records())})
 
 @app.route("/proposal", methods=["GET"])
 def proposal():
