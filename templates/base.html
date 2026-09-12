@@ -82,8 +82,9 @@
             </a>
 
             <div class="flex items-center gap-1">
-                <!-- Navigation Tabs -->
+                <!-- Navigation Tabs (메인 화면은 본문 카드가 같은 역할을 하므로 생략) -->
                 {% set nav_items = [('search', 'search', '부원 검색'), ('stats', 'bar-chart-3', '대시보드'), ('scoreboard', 'trophy', '점수판')] %}
+                {% if request.endpoint != 'index' %}
                 <nav class="flex items-center gap-1">
                     {% for endpoint, icon, label in nav_items %}
                     {% set is_active = request.endpoint == endpoint %}
@@ -94,6 +95,7 @@
                     </a>
                     {% endfor %}
                 </nav>
+                {% endif %}
 
                 <!-- Theme Toggle -->
                 <button id="theme-toggle" type="button" aria-label="밝은 테마와 어두운 테마 전환"
