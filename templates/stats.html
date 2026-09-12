@@ -17,146 +17,187 @@
 </div>
 {% endif %}
 
-<!-- Dashboard Header -->
-<div class="mb-6 flex flex-wrap items-end justify-between gap-4 sm:mb-8">
-    <h1 class="text-2xl font-extrabold tracking-tight sm:text-3xl">
-        탁우회 <span class="text-indigo-600 dark:text-indigo-400">통계 대시보드</span>
-    </h1>
-    <div class="rounded-xl border border-slate-200 bg-white px-4 py-2.5 dark:border-slate-800 dark:bg-slate-900">
+<h1 class="mb-5 text-2xl font-extrabold tracking-tight sm:text-3xl">
+    탁우회 <span class="text-indigo-600 dark:text-indigo-400">통계 대시보드</span>
+</h1>
+
+<!-- Summary Tiles -->
+<div class="mb-4 flex flex-wrap gap-3">
+    <div class="flex-1 basis-48 rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
         <p class="text-xs text-slate-500 dark:text-slate-400">전체 부원</p>
-        <p class="font-outfit text-xl font-extrabold">{{ total_count }}명</p>
+        <p class="font-outfit text-2xl font-extrabold">{{ total_count }}<span class="ml-0.5 text-base font-bold">명</span></p>
     </div>
+    {% for racket in racket_stats %}
+    <div class="flex-1 basis-48 rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
+        <p class="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+            <span class="h-2.5 w-2.5 rounded-sm {{ racket_colors.get(racket.racket, racket_colors['기타']) }}"></span>{{ racket.racket }}
+        </p>
+        <p class="font-outfit text-2xl font-extrabold">
+            {{ racket.count }}<span class="ml-0.5 text-base font-bold">명</span>
+            <span class="ml-1 font-sans text-xs font-medium text-slate-500 dark:text-slate-400">{{ racket.ratio }}%{% if racket.avg_division is not none %} · 평균 {{ racket.avg_division }}부{% endif %}</span>
+        </p>
+    </div>
+    {% endfor %}
 </div>
 
-<div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+<div class="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:items-start">
 
-    <!-- Left Column: Charts -->
-    <div class="flex flex-col gap-4 lg:col-span-1">
+    <!-- Left: Distribution Chart (데스크톱에서는 명단을 내려도 계속 보이도록 고정) -->
+    <div class="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto">
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+            <h2 class="text-sm font-bold">부수별 인원 분포</h2>
+            <div class="flex items-center gap-3 text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                {% for racket in legend %}
+                <span class="flex items-center gap-1.5">
+                    <span class="h-2.5 w-2.5 rounded-sm {{ racket_colors[racket] }}"></span>{{ racket }}
+                </span>
+                {% endfor %}
+            </div>
+        </div>
 
-        <!-- 1. Division Distribution (라켓 전형별 누적 막대) -->
-        <div class="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-            <div class="mb-5 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-                <h2 class="text-sm font-bold">부수별 인원 분포</h2>
-                <!-- Legend -->
-                <div class="flex items-center gap-3 text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                    {% for racket in legend %}
-                    <span class="flex items-center gap-1.5">
-                        <span class="h-2.5 w-2.5 rounded-sm {{ racket_colors[racket] }}"></span>{{ racket }}
+        <div class="space-y-0.5">
+            {% for g in groups %}
+            <a href="{{ url_for('stats', division=g.division) }}" data-division-bar="{{ g.division }}" {% if selected_division == g.division %}aria-current="true"{% endif %}
+               aria-label="{{ g.division }} {{ g.count }}명 ({{ g.ratio }}%): {% for racket, count in g.rackets %}{{ racket }} {{ count }}명{{ ', ' if not loop.last }}{% endfor %}"
+               class="-mx-2 block rounded-lg px-2 py-1.5 transition-colors hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 aria-[current=true]:bg-indigo-50 dark:hover:bg-slate-800/70 dark:aria-[current=true]:bg-indigo-500/10">
+                <div class="mb-1.5 flex items-center justify-between text-xs">
+                    <span class="font-semibold {{ 'text-slate-500 dark:text-slate-400' if g.division == '미지정' else 'text-slate-700 dark:text-slate-200' }}">{{ g.division }}</span>
+                    <span class="text-slate-500 dark:text-slate-400">
+                        <strong class="font-outfit text-slate-900 dark:text-slate-100">{{ g.count }}</strong>명 · {{ g.ratio }}%
                     </span>
+                </div>
+                <!-- Stacked Bar: 길이는 인원이 가장 많은 부수 기준, 조각은 라켓 전형별 인원 -->
+                <div class="flex h-2.5 gap-[2px] overflow-hidden rounded-r" style="width: {{ g.width }}%;">
+                    {% for racket, count in g.rackets %}
+                    <div class="{{ racket_colors[racket] }}" style="flex: {{ count }} 1 0%;" title="{{ racket }} {{ count }}명"></div>
                     {% endfor %}
                 </div>
-            </div>
-
-            <div class="space-y-1">
-                {% for g in groups %}
-                <a href="#{{ g.anchor }}"
-                   aria-label="{{ g.division }} {{ g.count }}명 ({{ g.ratio }}%): {% for racket, count in g.rackets %}{{ racket }} {{ count }}명{{ ', ' if not loop.last }}{% endfor %}"
-                   class="-mx-2 block rounded-lg px-2 py-2 transition-colors hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:hover:bg-slate-800/70">
-                    <div class="mb-2 flex items-center justify-between text-xs">
-                        <span class="font-semibold {{ 'text-slate-500 dark:text-slate-400' if g.division == '미지정' else 'text-slate-700 dark:text-slate-200' }}">{{ g.division }}</span>
-                        <span class="text-slate-500 dark:text-slate-400">
-                            <strong class="font-outfit text-slate-900 dark:text-slate-100">{{ g.count }}</strong>명 · {{ g.ratio }}%
-                        </span>
-                    </div>
-                    <!-- Stacked Bar: 길이는 인원이 가장 많은 부수 기준, 조각은 라켓 전형별 인원 -->
-                    <div class="flex h-3 gap-[2px] overflow-hidden rounded-r" style="width: {{ g.width }}%;">
-                        {% for racket, count in g.rackets %}
-                        <div class="{{ racket_colors[racket] }}" style="flex: {{ count }} 1 0%;" title="{{ racket }} {{ count }}명"></div>
-                        {% endfor %}
-                    </div>
-                </a>
-                {% else %}
-                <p class="py-6 text-center text-sm text-slate-500 dark:text-slate-400">등록된 부원이 없습니다.</p>
-                {% endfor %}
-            </div>
-            {% if groups %}
-            <p class="mt-4 text-[11px] text-slate-400 dark:text-slate-500">막대를 누르면 해당 부수의 명단으로 이동합니다.</p>
-            {% endif %}
+            </a>
+            {% else %}
+            <p class="py-6 text-center text-sm text-slate-500 dark:text-slate-400">등록된 부원이 없습니다.</p>
+            {% endfor %}
         </div>
-
-        <!-- 2. Racket Style Distribution -->
-        <div class="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-            <h2 class="mb-4 text-sm font-bold">라켓 전형 구성비</h2>
-            <div class="space-y-2">
-                {% for racket in racket_stats %}
-                <div class="flex items-center justify-between gap-3 rounded-xl border border-slate-200 px-4 py-3 dark:border-slate-800">
-                    <div class="flex items-center gap-2.5">
-                        <span class="h-2.5 w-2.5 flex-shrink-0 rounded-sm {{ racket_colors.get(racket.racket, racket_colors['기타']) }}"></span>
-                        <div>
-                            <p class="text-sm font-bold">{{ racket.racket }}</p>
-                            {% if racket.avg_division is not none %}
-                            <p class="text-[11px] text-slate-500 dark:text-slate-400">평균 {{ racket.avg_division }}부</p>
-                            {% endif %}
-                        </div>
-                    </div>
-                    <div class="text-right">
-                        <p class="font-outfit text-base font-extrabold">{{ racket.count }}명</p>
-                        <p class="text-[11px] text-slate-500 dark:text-slate-400">{{ racket.ratio }}%</p>
-                    </div>
-                </div>
-                {% else %}
-                <p class="py-6 text-center text-sm text-slate-500 dark:text-slate-400">입력된 라켓 정보가 없습니다.</p>
-                {% endfor %}
-            </div>
-        </div>
-
+        {% if groups %}
+        <p class="mt-4 text-[11px] text-slate-400 dark:text-slate-500">막대를 누르면 해당 부수 명단만 볼 수 있습니다.</p>
+        {% endif %}
     </div>
 
-    <!-- Right Column: Grouped List -->
-    <div class="lg:col-span-2">
-        <div class="h-full rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-            <div class="mb-4 flex items-center justify-between gap-3 border-b border-slate-200 pb-4 dark:border-slate-800">
-                <h2 class="text-sm font-bold">부수별 그룹 명단</h2>
-                <span class="text-xs text-slate-500 dark:text-slate-400">부수 오름차순 · 이름순</span>
-            </div>
+    <!-- Right: Grouped Roster -->
+    <div id="roster" class="scroll-mt-20 rounded-2xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900 sm:p-5 lg:col-span-2">
+        <div class="mb-3 flex items-center justify-between gap-3">
+            <h2 class="text-sm font-bold">부수별 그룹 명단</h2>
+            <span class="text-xs text-slate-500 dark:text-slate-400">부수 오름차순 · 이름순</span>
+        </div>
 
-            <div class="space-y-4">
+        <!-- 부수 선택 바 (스크롤을 따라다니며, 원하는 부수만 보여준다) -->
+        {% if groups %}
+        <div class="sticky top-16 z-20 -mx-3 mb-3 overflow-x-auto border-b border-slate-200 bg-white px-3 py-2 dark:border-slate-800 dark:bg-slate-900 sm:-mx-5 sm:px-5">
+            <div class="flex w-max gap-1.5">
+                <a href="{{ url_for('stats') }}" data-division-chip="" {% if not selected_division %}aria-current="true"{% endif %}
+                   class="inline-flex h-8 items-center rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-600 transition-colors hover:border-indigo-400 hover:text-indigo-700 aria-[current=true]:border-indigo-600 aria-[current=true]:bg-indigo-600 aria-[current=true]:text-white dark:border-slate-700 dark:text-slate-300 dark:hover:border-indigo-500 dark:hover:text-indigo-300 dark:aria-[current=true]:border-indigo-500 dark:aria-[current=true]:bg-indigo-500 dark:aria-[current=true]:text-white">전체</a>
                 {% for g in groups %}
-                <section id="{{ g.anchor }}" class="scroll-mt-20 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
-                    <!-- Group Header -->
-                    <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 border-b border-slate-200 bg-slate-50 px-4 py-2.5 dark:border-slate-800 dark:bg-slate-800/40">
-                        <h3 class="flex items-center gap-2 text-sm font-bold">
-                            {% if g.division == '미지정' %}
-                            <span class="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">부수 미지정</span>
-                            {% else %}
-                            <span class="rounded-md border border-indigo-200 bg-indigo-50 px-2 py-0.5 font-outfit text-xs text-indigo-700 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-300">{{ g.division }}</span>
-                            {% endif %}
-                        </h3>
-                        <span class="flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
-                            {% for racket, count in g.rackets %}
-                            <span class="flex items-center gap-1">
-                                <span class="h-2 w-2 rounded-sm {{ racket_colors[racket] }}"></span>{{ racket }} {{ count }}
-                            </span>
-                            {% endfor %}
-                            <span>총 <strong class="font-outfit text-slate-900 dark:text-slate-100">{{ g.count }}</strong>명</span>
-                        </span>
-                    </div>
-
-                    <!-- Group Members List -->
-                    <div class="grid grid-cols-1 gap-px bg-slate-200 sm:grid-cols-2 dark:bg-slate-800">
-                        {% for m in g.members %}
-                        <div class="flex items-center justify-between gap-3 bg-white px-4 py-2.5 dark:bg-slate-900">
-                            <span class="text-sm font-semibold">{{ m.이름 }}</span>
-                            {% if m.라켓 == '쉐이크' %}
-                            <span class="rounded-md border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300">{{ m.라켓 }}</span>
-                            {% elif m.라켓 == '펜홀더' %}
-                            <span class="rounded-md border border-rose-200 bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">{{ m.라켓 }}</span>
-                            {% else %}
-                            <span class="rounded-md border border-slate-200 bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">{{ m.라켓 or '미입력' }}</span>
-                            {% endif %}
-                        </div>
-                        {% endfor %}
-                        {% if g.members|length is odd %}
-                        <div class="hidden bg-white sm:block dark:bg-slate-900"></div>
-                        {% endif %}
-                    </div>
-                </section>
-                {% else %}
-                <p class="py-10 text-center text-sm text-slate-500 dark:text-slate-400">등록된 부원이 없습니다.</p>
+                <a href="{{ url_for('stats', division=g.division) }}" data-division-chip="{{ g.division }}" {% if selected_division == g.division %}aria-current="true"{% endif %}
+                   class="inline-flex h-8 items-center rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-600 transition-colors hover:border-indigo-400 hover:text-indigo-700 aria-[current=true]:border-indigo-600 aria-[current=true]:bg-indigo-600 aria-[current=true]:text-white dark:border-slate-700 dark:text-slate-300 dark:hover:border-indigo-500 dark:hover:text-indigo-300 dark:aria-[current=true]:border-indigo-500 dark:aria-[current=true]:bg-indigo-500 dark:aria-[current=true]:text-white">{{ g.division }}</a>
                 {% endfor %}
             </div>
+        </div>
+        {% endif %}
+
+        <div class="space-y-3">
+            {% for g in groups %}
+            <section id="{{ g.anchor }}" data-division-group="{{ g.division }}" {% if selected_division and selected_division != g.division %}hidden{% endif %}
+                     class="scroll-mt-32 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
+                <!-- Group Header -->
+                <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 border-b border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-800/40">
+                    <h3 class="text-sm font-bold">
+                        {% if g.division == '미지정' %}
+                        <span class="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">부수 미지정</span>
+                        {% else %}
+                        <span class="rounded-md border border-indigo-200 bg-indigo-50 px-2 py-0.5 font-outfit text-xs text-indigo-700 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-300">{{ g.division }}</span>
+                        {% endif %}
+                    </h3>
+                    <span class="flex items-center gap-2.5 text-[11px] text-slate-500 dark:text-slate-400">
+                        {% for racket, count in g.rackets %}
+                        <span class="flex items-center gap-1">
+                            <span class="h-2 w-2 rounded-sm {{ racket_colors[racket] }}"></span>{{ racket }} {{ count }}
+                        </span>
+                        {% endfor %}
+                        <span>총 <strong class="font-outfit text-slate-900 dark:text-slate-100">{{ g.count }}</strong>명</span>
+                    </span>
+                </div>
+
+                <!-- Group Members -->
+                <div class="grid grid-cols-2 gap-px bg-slate-200 sm:grid-cols-3 xl:grid-cols-4 dark:bg-slate-800">
+                    {% for m in g.members %}
+                    <div class="flex items-center justify-between gap-1.5 bg-white px-3 py-2 dark:bg-slate-900">
+                        <span class="truncate text-sm font-semibold">{{ m.이름 }}</span>
+                        {% if m.라켓 == '쉐이크' %}
+                        <span class="flex-shrink-0 rounded border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300">{{ m.라켓 }}</span>
+                        {% elif m.라켓 == '펜홀더' %}
+                        <span class="flex-shrink-0 rounded border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">{{ m.라켓 }}</span>
+                        {% else %}
+                        <span class="flex-shrink-0 rounded border border-slate-200 bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">{{ m.라켓 or '미입력' }}</span>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                    {# 마지막 줄의 빈 칸도 같은 배경으로 채워 구분선 색이 드러나지 않게 한다 (열 수는 화면 폭에 따라 2·3·4) #}
+                    {% set member_count = g.members|length %}
+                    {% for _ in range((4 - member_count % 4) % 4) %}
+                    <div class="hidden bg-white xl:block dark:bg-slate-900"></div>
+                    {% endfor %}
+                    {% for _ in range((3 - member_count % 3) % 3) %}
+                    <div class="hidden bg-white sm:block xl:hidden dark:bg-slate-900"></div>
+                    {% endfor %}
+                    {% if member_count is odd %}
+                    <div class="bg-white sm:hidden dark:bg-slate-900"></div>
+                    {% endif %}
+                </div>
+            </section>
+            {% else %}
+            <p class="py-10 text-center text-sm text-slate-500 dark:text-slate-400">등록된 부원이 없습니다.</p>
+            {% endfor %}
         </div>
     </div>
 
 </div>
+{% endblock %}
+
+{% block scripts %}
+<!-- 부수 선택: 페이지 이동 없이 명단을 걸러 보여준다 (JS가 없으면 링크로 같은 결과) -->
+<script>
+(() => {
+    const chips = [...document.querySelectorAll('[data-division-chip]')];
+    const bars = [...document.querySelectorAll('[data-division-bar]')];
+    const groups = [...document.querySelectorAll('[data-division-group]')];
+    const roster = document.getElementById('roster');
+    if (!groups.length) return;
+
+    function select(division, scrollToRoster) {
+        for (const group of groups) group.hidden = division !== '' && group.dataset.divisionGroup !== division;
+        for (const el of [...chips, ...bars]) {
+            const value = el.dataset.divisionChip ?? el.dataset.divisionBar;
+            if (value === division) el.setAttribute('aria-current', 'true');
+            else el.removeAttribute('aria-current');
+        }
+        history.replaceState(null, '', division ? `?division=${encodeURIComponent(division)}` : location.pathname);
+        if (scrollToRoster) roster.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    document.addEventListener('click', (event) => {
+        const chip = event.target.closest('[data-division-chip]');
+        if (chip) {
+            event.preventDefault();
+            // 이미 선택된 부수를 다시 누르면 전체로 되돌린다
+            select(chip.getAttribute('aria-current') === 'true' ? '' : chip.dataset.divisionChip, false);
+            return;
+        }
+        const bar = event.target.closest('[data-division-bar]');
+        if (bar) {
+            event.preventDefault();
+            const selected = bar.getAttribute('aria-current') === 'true' ? '' : bar.dataset.divisionBar;
+            select(selected, Boolean(selected));
+        }
+    });
+})();
+</script>
 {% endblock %}

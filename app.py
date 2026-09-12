@@ -326,6 +326,13 @@ def stats():
     present = {name for g in groups for name, _ in g["rackets"]}
     legend = [r for r in (*RACKET_ORDER, "기타") if r in present]
 
+    # 명단에서 특정 부수만 보기 (인원이 많아질 때 스크롤을 줄이기 위한 선택). 값이 없으면 전체
+    selected_division = request.args.get("division", "").strip()
+    if selected_division and selected_division != UNASSIGNED_DIVISION:
+        selected_division = normalize_division(selected_division)
+    if selected_division not in {g["division"] for g in groups}:
+        selected_division = ""
+
     # 3. 추가 통계: 전형별(라켓) 인원 분포 및 평균 부수
     racket_members = {}
     for m in members:
@@ -349,6 +356,7 @@ def stats():
         legend=legend,
         racket_stats=racket_stats,
         total_count=total_count,
+        selected_division=selected_division,
         is_dummy=is_dummy
     )
 
