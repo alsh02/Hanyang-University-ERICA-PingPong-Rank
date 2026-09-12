@@ -1,12 +1,25 @@
 <!DOCTYPE html>
-<html lang="ko" class="h-full bg-slate-950 text-slate-100">
+<html lang="ko" class="h-full bg-slate-950 text-slate-100 motion-safe:scroll-smooth">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>POWERDRIVE RANK</title>
+    <title>{% block title %}POWERDRIVE RANK{% endblock %}</title>
     <!-- SEO Meta Tags -->
     <meta name="description" content="대학 탁구 동아리 '탁우회' 부원들의 이름, 부수, 라켓(전형) 정보를 실시간으로 검색하고 통계 분포를 시각적으로 확인하는 대시보드 시스템입니다.">
     <meta name="keywords" content="탁우회, 탁구, 탁구 동아리, 탁구 부수, 탁구 대시보드, 쉐이크, 펜홀더">
+    <meta name="theme-color" content="#020617">
+    <!-- Open Graph (카카오톡 등 링크 공유 미리보기) -->
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="POWERDRIVE RANK">
+    <meta property="og:title" content="POWERDRIVE RANK · 탁우회 부수 검색">
+    <meta property="og:description" content="한양대학교 ERICA 탁구 동아리 탁우회 부원들의 부수와 라켓 전형을 바로 검색하고, 부수별 전력 분포를 확인하세요.">
+    <meta property="og:image" content="{{ url_for('static', filename='og-image.jpg', _external=True) }}">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta name="twitter:card" content="summary_large_image">
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon-32.png') }}">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -25,8 +38,8 @@
             }
         }
     </script>
-    <!-- Lucide Icons CDN -->
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Lucide Icons CDN (버전 고정: @latest는 아이콘 이름 변경 등으로 예고 없이 깨질 수 있음) -->
+    <script src="https://unpkg.com/lucide@1.44.0/dist/umd/lucide.min.js" defer></script>
     <style>
         body {
             font-family: 'Inter', sans-serif;
@@ -40,32 +53,41 @@
         .text-glow {
             text-shadow: 0 0 15px rgba(99, 102, 241, 0.5);
         }
+        /* flex 등 display 유틸리티가 붙은 요소도 hidden 속성으로 확실히 숨김 */
+        [hidden] {
+            display: none !important;
+        }
+        /* 아이콘 스크립트가 로드되기 전에도 자리를 잡아 레이아웃이 흔들리지 않게 함 */
+        i[data-lucide] {
+            display: block;
+        }
     </style>
 </head>
 <body class="flex flex-col min-h-screen bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-indigo-950/40 via-slate-950 to-slate-950 antialiased selection:bg-indigo-500 selection:text-white w-full overflow-x-hidden">
-    
+
     <!-- Top Header / Navigation -->
     <header class="sticky top-0 z-50 w-full border-b border-slate-800/80 bg-slate-950/70 backdrop-blur-md">
         <div class="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8">
             <div class="flex items-center justify-between h-16">
                 <!-- Logo -->
-                <a href="/" class="flex items-center gap-2 flex-shrink-0 group">
-                    <img src="{{ url_for('static', filename='logo.png') }}" alt="POWERDRIVE Logo" class="h-10 w-10 sm:h-12 sm:w-12 transition-transform duration-300 group-hover:scale-105">
+                <a href="{{ url_for('index') }}" class="flex items-center gap-2 flex-shrink-0 group">
+                    <img src="{{ url_for('static', filename='logo-96.png') }}" alt="POWERDRIVE Logo" width="48" height="48" class="h-10 w-10 sm:h-12 sm:w-12 transition-transform duration-300 group-hover:scale-105">
                     <span class="text-sm sm:text-lg md:text-xl font-bold font-outfit tracking-wider bg-gradient-to-r from-indigo-400 via-purple-400 to-rose-400 bg-clip-text text-transparent text-glow">
                         POWERDRIVE <span class="text-white font-extrabold">RANK</span>
                     </span>
                 </a>
 
                 <!-- Navigation Tabs -->
+                {% set nav_items = [('index', 'search', '부원 검색'), ('stats', 'bar-chart-3', '대시보드')] %}
                 <nav class="flex items-center gap-1 sm:gap-2">
-                    <a href="/" id="nav-search" class="flex items-center gap-1.5 px-2 py-1.5 sm:px-4 sm:py-2 rounded-lg text-xs sm:text-sm font-medium transition-all duration-300 hover:bg-slate-800/60 text-slate-300 hover:text-white whitespace-nowrap">
-                        <i data-lucide="search" class="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0"></i>
-                        <span>부원 검색</span>
+                    {% for endpoint, icon, label in nav_items %}
+                    {% set is_active = request.endpoint == endpoint %}
+                    <a href="{{ url_for(endpoint) }}" {% if is_active %}aria-current="page"{% endif %}
+                       class="flex items-center gap-1.5 px-2 py-1.5 sm:px-4 sm:py-2 rounded-lg border text-xs sm:text-sm font-medium transition-all duration-300 whitespace-nowrap {{ 'bg-indigo-600/20 text-indigo-400 border-indigo-500/30' if is_active else 'border-transparent text-slate-300 hover:bg-slate-800/60 hover:text-white' }}">
+                        <i data-lucide="{{ icon }}" class="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0"></i>
+                        <span>{{ label }}</span>
                     </a>
-                    <a href="/stats" id="nav-stats" class="flex items-center gap-1.5 px-2 py-1.5 sm:px-4 sm:py-2 rounded-lg text-xs sm:text-sm font-medium transition-all duration-300 hover:bg-slate-800/60 text-slate-300 hover:text-white whitespace-nowrap">
-                        <i data-lucide="bar-chart-3" class="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0"></i>
-                        <span>대시보드</span>
-                    </a>
+                    {% endfor %}
                 </nav>
             </div>
         </div>
@@ -90,21 +112,11 @@
         </div>
     </footer>
 
-    <!-- Initialize Lucide Icons -->
-    <script>
-        lucide.createIcons();
+    {% block scripts %}{% endblock %}
 
-        // Highlight active navigation tab
-        const currentPath = window.location.pathname;
-        if (currentPath === '/' || currentPath === '') {
-            const btn = document.getElementById('nav-search');
-            btn.classList.remove('text-slate-300', 'hover:bg-slate-800/60');
-            btn.classList.add('bg-indigo-600/20', 'text-indigo-400', 'border', 'border-indigo-500/30');
-        } else if (currentPath.startsWith('/stats')) {
-            const btn = document.getElementById('nav-stats');
-            btn.classList.remove('text-slate-300', 'hover:bg-slate-800/60');
-            btn.classList.add('bg-indigo-600/20', 'text-indigo-400', 'border', 'border-indigo-500/30');
-        }
+    <!-- Initialize Lucide Icons (defer로 로드되므로 DOM 준비 후 실행) -->
+    <script>
+        document.addEventListener('DOMContentLoaded', () => window.lucide && lucide.createIcons());
     </script>
 </body>
 </html>

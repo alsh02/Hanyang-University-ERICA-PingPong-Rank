@@ -1,9 +1,11 @@
 {% extends 'base.html' %}
 
+{% block title %}POWERDRIVE RANK · 탁우회 부수 검색{% endblock %}
+
 {% block content %}
 <!-- Dummy Data Fallback Warning Banner -->
 {% if is_dummy %}
-<div class="mb-8 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-300 flex items-start gap-3 shadow-lg shadow-amber-500/5 animate-fade-in">
+<div class="mb-8 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-300 flex items-start gap-3 shadow-lg shadow-amber-500/5">
     <i data-lucide="alert-triangle" class="w-5 h-5 text-amber-400 mt-0.5 flex-shrink-0"></i>
     <div>
         <h4 class="font-semibold text-sm">로컬 테스트 모드 (구글 시트 연동 전)</h4>
@@ -13,7 +15,7 @@
 {% endif %}
 
 <!-- Hero Banner Header -->
-<div class="text-center my-10 max-w-2xl mx-auto">
+<div class="text-center mt-2 mb-8 sm:my-10 max-w-2xl mx-auto">
     <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 mb-4">
         <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
         실시간 동아리 전력 분석
@@ -27,127 +29,311 @@
 </div>
 
 <!-- Search Form Section -->
-<div class="max-w-3xl mx-auto mb-10">
-    <form action="/" method="GET" class="glass-panel p-4 rounded-2xl shadow-xl flex flex-col sm:flex-row gap-3">
-        <!-- Filter Dropdown -->
-        <div class="w-full sm:w-1/4 relative">
-            <select name="filter" class="w-full h-12 pl-4 pr-10 rounded-xl bg-slate-900 border border-slate-800 text-slate-200 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent appearance-none transition-all cursor-pointer">
-                <option value="이름" {% if filter == '이름' %}selected{% endif %}>이름으로 검색</option>
-                <option value="부수" {% if filter == '부수' %}selected{% endif %}>부수로 검색</option>
-                <option value="라켓" {% if filter == '라켓' %}selected{% endif %}>라켓전형 검색</option>
-            </select>
-            <div class="absolute inset-y-0 right-3 flex items-center pointer-events-none text-slate-500">
-                <i data-lucide="chevron-down" class="w-4 h-4"></i>
+{% set placeholders = {
+    '이름': '이름 또는 초성 (예: 홍길동, ㅎㄱㄷ)',
+    '부수': '부수 입력 (예: 3부 또는 3)',
+    '라켓': '라켓 전형 (예: 쉐이크, 펜홀더)',
+} %}
+<div class="max-w-3xl mx-auto mb-8 sm:mb-10">
+    <form id="search-form" action="{{ url_for('index') }}" method="GET" role="search" class="glass-panel p-3 sm:p-4 rounded-2xl shadow-xl scroll-mt-20">
+        <div class="flex flex-col sm:flex-row gap-3">
+            <!-- Filter Tabs (이름 / 부수 / 라켓) -->
+            <fieldset class="min-w-0 grid grid-cols-3 gap-1 p-1 rounded-xl bg-slate-900 border border-slate-800 sm:flex-shrink-0">
+                <legend class="sr-only">검색 기준</legend>
+                {% for field, placeholder in placeholders.items() %}
+                <label class="cursor-pointer">
+                    <input type="radio" name="filter" value="{{ field }}" data-placeholder="{{ placeholder }}" class="peer sr-only" {% if filter == field %}checked{% endif %}>
+                    <span class="flex items-center justify-center h-10 sm:px-4 rounded-lg text-sm font-medium text-slate-400 transition-colors hover:text-slate-200 peer-checked:bg-indigo-600 peer-checked:text-white peer-checked:shadow-lg peer-checked:shadow-indigo-600/20 peer-focus-visible:ring-2 peer-focus-visible:ring-indigo-400">{{ field }}</span>
+                </label>
+                {% endfor %}
+            </fieldset>
+
+            <div class="flex gap-2 sm:gap-3 flex-grow">
+                <!-- Search Input -->
+                <div class="relative flex-grow">
+                    <label for="search-input" class="sr-only">검색어</label>
+                    <input id="search-input" type="search" name="query" value="{{ query }}" placeholder="{{ placeholders[filter] }}"
+                           autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search"
+                           class="w-full h-12 pl-11 pr-4 rounded-xl bg-slate-900 border border-slate-800 text-slate-100 text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all">
+                    <div class="absolute inset-y-0 left-4 flex items-center pointer-events-none text-slate-500">
+                        <i data-lucide="search" class="w-[18px] h-[18px]"></i>
+                    </div>
+                </div>
+
+                <!-- Search Button -->
+                <button type="submit" class="px-4 sm:px-6 h-12 whitespace-nowrap bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 active:scale-95 text-white font-medium rounded-xl text-sm transition-all duration-200 flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20">
+                    <i data-lucide="search" class="w-4 h-4 flex-shrink-0"></i>
+                    <span>검색</span>
+                </button>
             </div>
         </div>
 
-        <!-- Search Input -->
-        <div class="w-full sm:w-2/3 relative">
-            <input type="text" name="query" value="{{ query }}" placeholder="검색어를 입력해 주세요 (예: 홍길동, 3부, 쉐이크)..." 
-                   class="w-full h-12 pl-11 pr-4 rounded-xl bg-slate-900 border border-slate-800 text-slate-100 text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all">
-            <div class="absolute inset-y-0 left-4 flex items-center pointer-events-none text-slate-500">
-                <i data-lucide="search" class="w-4.5 h-4.5"></i>
-            </div>
+        <!-- Quick Chips (부수 / 라켓 원탭 검색) -->
+        {% for field, options in [('부수', divisions), ('라켓', rackets)] %}
+        <div data-chips-for="{{ field }}" class="flex flex-wrap gap-2 mt-3 px-1" {% if filter != field %}hidden{% endif %}>
+            {% for option in options %}
+            <a href="{{ url_for('index', filter=field, query=option) }}" data-chip="{{ option }}" {% if filter == field and active_value == option %}aria-current="true"{% endif %}
+               class="inline-flex items-center h-8 px-3.5 rounded-full text-xs font-semibold border border-slate-700/80 bg-slate-900/60 text-slate-300 transition-colors hover:border-indigo-500/50 hover:text-white aria-[current=true]:bg-indigo-600 aria-[current=true]:border-indigo-500 aria-[current=true]:text-white">{{ option }}</a>
+            {% endfor %}
         </div>
-
-        <!-- Search Button -->
-        <button type="submit" class="w-full sm:w-auto px-6 h-12 whitespace-nowrap bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 active:scale-95 text-white font-medium rounded-xl text-sm transition-all duration-200 flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20">
-            <i data-lucide="search" class="w-4 h-4 flex-shrink-0"></i>
-            <span>검색</span>
-        </button>
+        {% endfor %}
     </form>
 </div>
 
-<!-- Search Results Header -->
-<div class="mb-6 flex items-center justify-between">
-    <div class="flex items-center gap-2">
-        <i data-lucide="users" class="w-5 h-5 text-indigo-400"></i>
-        <h3 class="text-lg font-bold text-white">
-            검색 결과 
-            <span class="text-indigo-400 ml-1 font-outfit">{{ members|length }}</span>명
-        </h3>
-    </div>
-    {% if query %}
-    <a href="/" class="text-xs text-rose-400 hover:text-rose-300 flex items-center gap-1 transition-colors">
-        <i data-lucide="rotate-ccw" class="w-3 h-3"></i>
-        <span>필터 초기화</span>
-    </a>
-    {% endif %}
-</div>
+<section class="min-h-[60vh] sm:min-h-0">
+    <p id="result-status" class="sr-only" aria-live="polite"></p>
 
-<!-- Results Grid -->
-{% if members %}
-<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-    {% for member in members %}
-    <div class="glass-panel group p-5 rounded-2xl relative overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:border-indigo-500/30 hover:shadow-xl hover:shadow-indigo-500/5">
-        <!-- Subtle gradient background pattern -->
-        <div class="absolute -right-10 -bottom-10 w-24 h-24 rounded-full bg-indigo-500/5 group-hover:bg-indigo-500/10 blur-xl transition-all duration-300"></div>
-        
-        <!-- Header Info -->
-        <div class="flex justify-between items-start mb-4">
-            <div>
-                <h4 class="text-xl font-bold text-white group-hover:text-indigo-400 transition-colors flex items-center gap-1.5">
-                    {{ member.이름 }}
-                </h4>
-                <p class="text-xs text-slate-500 mt-1">탁우회 정회원</p>
-            </div>
-            <!-- Division Badge -->
-            <span class="inline-flex items-center justify-center px-3 py-1 rounded-xl text-xs font-extrabold bg-gradient-to-tr from-indigo-500/20 to-purple-500/20 text-indigo-300 border border-indigo-500/30 shadow-inner">
-                {{ member.부수 }}
-            </span>
+    <!-- Search Results Header -->
+    <div id="result-header" class="mb-6 flex items-center justify-between" {% if is_initial %}hidden{% endif %}>
+        <div class="flex items-center gap-2">
+            <i data-lucide="users" class="w-5 h-5 text-indigo-400"></i>
+            <h3 class="text-lg font-bold text-white">
+                검색 결과
+                <span id="result-count" class="text-indigo-400 ml-1 font-outfit">{{ match_count }}</span>명
+            </h3>
         </div>
+        <a id="reset-link" href="{{ url_for('index') }}" class="text-xs text-rose-400 hover:text-rose-300 flex items-center gap-1 transition-colors">
+            <i data-lucide="rotate-ccw" class="w-3 h-3"></i>
+            <span>필터 초기화</span>
+        </a>
+    </div>
 
-        <hr class="border-slate-800/80 my-3">
+    <!-- Results Grid (전체 카드 중 검색어와 일치하는 카드만 노출) -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+        {% for member, matched in cards %}
+        <div data-member data-name="{{ member.이름 }}" data-division="{{ member.부수 }}" data-racket="{{ member.라켓 }}" {% if not matched %}hidden{% endif %}
+             class="glass-panel group p-5 rounded-2xl relative overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:border-indigo-500/30 hover:shadow-xl hover:shadow-indigo-500/5">
+            <!-- Subtle gradient background pattern -->
+            <div class="absolute -right-10 -bottom-10 w-24 h-24 rounded-full bg-indigo-500/5 group-hover:bg-indigo-500/10 blur-xl transition-all duration-300"></div>
 
-        <!-- Details Info -->
-        <div class="flex items-center justify-between text-sm mt-3">
-            <span class="text-slate-500 flex items-center gap-1.5">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 text-slate-500 group-hover:text-indigo-400 transition-colors flex-shrink-0">
-                    <circle cx="10" cy="10" r="5.5" />
-                    <path d="m14 14 5 5" />
-                    <circle cx="17" cy="8" r="1.5" fill="currentColor" />
-                </svg>
-                라켓 전형
-            </span>
-            <span class="font-medium flex items-center gap-1.5">
-                {% if member.라켓 == '쉐이크' %}
-                <span class="inline-block w-2 h-2 rounded-full bg-sky-400 animate-pulse"></span>
-                <span class="text-sky-300 font-semibold">{{ member.라켓 }}</span>
-                {% elif member.라켓 == '펜홀더' %}
-                <span class="inline-block w-2 h-2 rounded-full bg-rose-400 animate-pulse"></span>
-                <span class="text-rose-300 font-semibold">{{ member.라켓 }}</span>
+            <!-- Header Info -->
+            <div class="flex justify-between items-start mb-4">
+                <div>
+                    <h4 class="text-xl font-bold text-white group-hover:text-indigo-400 transition-colors flex items-center gap-1.5">
+                        {{ member.이름 }}
+                    </h4>
+                    <p class="text-xs text-slate-500 mt-1">탁우회 정회원</p>
+                </div>
+                <!-- Division Badge -->
+                {% if member.부수 %}
+                <span class="inline-flex items-center justify-center px-3 py-1 rounded-xl text-xs font-extrabold bg-gradient-to-tr from-indigo-500/20 to-purple-500/20 text-indigo-300 border border-indigo-500/30 shadow-inner">
+                    {{ member.부수 }}
+                </span>
                 {% else %}
-                <span class="inline-block w-2 h-2 rounded-full bg-slate-400"></span>
-                <span class="text-slate-300">{{ member.라켓 }}</span>
+                <span class="inline-flex items-center justify-center px-3 py-1 rounded-xl text-xs font-semibold bg-slate-800/60 text-slate-400 border border-slate-700">
+                    부수 미지정
+                </span>
                 {% endif %}
-            </span>
+            </div>
+
+            <hr class="border-slate-800/80 my-3">
+
+            <!-- Details Info -->
+            <div class="flex items-center justify-between text-sm mt-3">
+                <span class="text-slate-500 flex items-center gap-1.5">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 text-slate-500 group-hover:text-indigo-400 transition-colors flex-shrink-0">
+                        <circle cx="10" cy="10" r="5.5" />
+                        <path d="m14 14 5 5" />
+                        <circle cx="17" cy="8" r="1.5" fill="currentColor" />
+                    </svg>
+                    라켓 전형
+                </span>
+                <span class="font-medium flex items-center gap-1.5">
+                    {% if member.라켓 == '쉐이크' %}
+                    <span class="inline-block w-2 h-2 rounded-full bg-sky-400 animate-pulse"></span>
+                    <span class="text-sky-300 font-semibold">{{ member.라켓 }}</span>
+                    {% elif member.라켓 == '펜홀더' %}
+                    <span class="inline-block w-2 h-2 rounded-full bg-rose-400 animate-pulse"></span>
+                    <span class="text-rose-300 font-semibold">{{ member.라켓 }}</span>
+                    {% else %}
+                    <span class="inline-block w-2 h-2 rounded-full bg-slate-400"></span>
+                    <span class="text-slate-300">{{ member.라켓 or '미입력' }}</span>
+                    {% endif %}
+                </span>
+            </div>
         </div>
+        {% endfor %}
     </div>
-    {% endfor %}
-</div>
-{% else %}
-  {% if is_initial %}
-  <!-- Initial State (첫 진입) -->
-  <div class="glass-panel text-center py-20 rounded-3xl border-dashed border-2 border-slate-800">
-      <div class="w-16 h-16 bg-indigo-950/60 rounded-full flex items-center justify-center mx-auto mb-4 border border-indigo-500/20 text-indigo-400">
-          <i data-lucide="search" class="w-6 h-6 animate-pulse"></i>
-      </div>
-      <h3 class="text-lg font-bold text-white mb-2">부원 검색을 시작해 보세요</h3>
-      <p class="text-slate-500 text-sm max-w-sm mx-auto px-4 break-keep">
-          상단 검색창에서 필터(이름, 부수, 라켓)를 선택하고 검색어를 입력하여 탁우회 부원 정보를 조회할 수 있습니다.
-      </p>
-  </div>
-  {% else %}
-  <!-- Empty State (검색 결과 없음) -->
-  <div class="glass-panel text-center py-20 rounded-3xl border-dashed border-2 border-slate-800">
-      <div class="w-16 h-16 bg-slate-900/60 rounded-full flex items-center justify-center mx-auto mb-4 border border-slate-800">
-          <i data-lucide="user-x" class="w-8 h-8 text-slate-500"></i>
-      </div>
-      <h3 class="text-lg font-bold text-white mb-2">검색 결과가 없습니다</h3>
-      <p class="text-slate-500 text-sm max-w-sm mx-auto px-4 break-keep">
-          검색어를 정확하게 입력하셨는지 확인해 주세요. 다른 검색어 혹은 필터를 선택해 보시는 것을 권장합니다.
-      </p>
-  </div>
-  {% endif %}
-{% endif %}
+
+    <!-- Initial State (첫 진입) -->
+    <div id="initial-state" class="glass-panel text-center py-20 rounded-3xl border-dashed border-2 border-slate-800" {% if not is_initial %}hidden{% endif %}>
+        <div class="w-16 h-16 bg-indigo-950/60 rounded-full flex items-center justify-center mx-auto mb-4 border border-indigo-500/20 text-indigo-400">
+            <i data-lucide="search" class="w-6 h-6 animate-pulse"></i>
+        </div>
+        <h3 class="text-lg font-bold text-white mb-2">부원 검색을 시작해 보세요</h3>
+        <p class="text-slate-500 text-sm max-w-sm mx-auto px-4 break-keep">
+            검색 기준(이름, 부수, 라켓)을 고르고 입력하면 결과가 바로 나타납니다. 이름은 초성(예: ㅎㄱㄷ)으로도 찾을 수 있어요.
+        </p>
+        <p class="mt-4 text-xs text-slate-600">현재 등록 부원 <strong class="text-slate-400 font-outfit">{{ total_count }}</strong>명</p>
+    </div>
+
+    <!-- Empty State (검색 결과 없음) -->
+    <div id="empty-state" class="glass-panel text-center py-20 rounded-3xl border-dashed border-2 border-slate-800" {% if is_initial or match_count %}hidden{% endif %}>
+        <div class="w-16 h-16 bg-slate-900/60 rounded-full flex items-center justify-center mx-auto mb-4 border border-slate-800">
+            <i data-lucide="user-x" class="w-8 h-8 text-slate-500"></i>
+        </div>
+        <h3 class="text-lg font-bold text-white mb-2">검색 결과가 없습니다</h3>
+        <p class="text-slate-500 text-sm max-w-sm mx-auto px-4 break-keep">
+            검색어를 정확하게 입력하셨는지 확인해 주세요. 다른 검색어 혹은 필터를 선택해 보시는 것을 권장합니다.
+        </p>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<!-- 즉시 검색: 입력할 때마다 페이지 이동 없이 카드를 필터링 (JS가 없으면 기존처럼 폼 전송으로 동작) -->
+<script>
+(() => {
+    const form = document.getElementById('search-form');
+    const input = document.getElementById('search-input');
+    const radios = [...form.querySelectorAll('input[name="filter"]')];
+    const chipGroups = [...form.querySelectorAll('[data-chips-for]')];
+    const cards = [...document.querySelectorAll('[data-member]')];
+    const resultHeader = document.getElementById('result-header');
+    const resultCount = document.getElementById('result-count');
+    const resultStatus = document.getElementById('result-status');
+    const initialState = document.getElementById('initial-state');
+    const emptyState = document.getElementById('empty-state');
+
+    // ---- 검색 규칙: app.py의 match_name / match_division / match_racket과 동일 ----
+    const CHOSUNG = 'ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ';
+    const JUNGSUNG = ['ㅏ', 'ㅐ', 'ㅑ', 'ㅒ', 'ㅓ', 'ㅔ', 'ㅕ', 'ㅖ', 'ㅗ', 'ㅗㅏ', 'ㅗㅐ', 'ㅗㅣ', 'ㅛ', 'ㅜ',
+                      'ㅜㅓ', 'ㅜㅔ', 'ㅜㅣ', 'ㅠ', 'ㅡ', 'ㅡㅣ', 'ㅣ'];
+    const JONGSUNG = ['', 'ㄱ', 'ㄲ', 'ㄱㅅ', 'ㄴ', 'ㄴㅈ', 'ㄴㅎ', 'ㄷ', 'ㄹ', 'ㄹㄱ', 'ㄹㅁ', 'ㄹㅂ', 'ㄹㅅ', 'ㄹㅌ',
+                      'ㄹㅍ', 'ㄹㅎ', 'ㅁ', 'ㅂ', 'ㅂㅅ', 'ㅅ', 'ㅆ', 'ㅇ', 'ㅈ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ'];
+    const COMPOUND_JAMO = { 'ㄳ': 'ㄱㅅ', 'ㄵ': 'ㄴㅈ', 'ㄶ': 'ㄴㅎ', 'ㄺ': 'ㄹㄱ', 'ㄻ': 'ㄹㅁ', 'ㄼ': 'ㄹㅂ', 'ㄽ': 'ㄹㅅ',
+                            'ㄾ': 'ㄹㅌ', 'ㄿ': 'ㄹㅍ', 'ㅀ': 'ㄹㅎ', 'ㅄ': 'ㅂㅅ', 'ㅘ': 'ㅗㅏ', 'ㅙ': 'ㅗㅐ', 'ㅚ': 'ㅗㅣ',
+                            'ㅝ': 'ㅜㅓ', 'ㅞ': 'ㅜㅔ', 'ㅟ': 'ㅜㅣ', 'ㅢ': 'ㅡㅣ' };
+
+    const syllableIndex = (ch) => {
+        const code = ch.charCodeAt(0) - 0xAC00;
+        return code >= 0 && code < 11172 ? code : -1;
+    };
+    const toJamo = (text) => Array.from(text, (ch) => {
+        const code = syllableIndex(ch);
+        if (code < 0) return COMPOUND_JAMO[ch] || ch;
+        return CHOSUNG[Math.floor(code / 588)] + JUNGSUNG[Math.floor((code % 588) / 28)] + JONGSUNG[code % 28];
+    }).join('').toLowerCase();
+    const toChosung = (text) => Array.from(text, (ch) => {
+        const code = syllableIndex(ch);
+        return code < 0 ? ch : CHOSUNG[Math.floor(code / 588)];
+    }).join('');
+
+    function matchName(name, rawQuery) {
+        const query = rawQuery.replace(/\s+/g, '').toLowerCase();
+        if (!query) return false;
+        name = name.toLowerCase();
+        const queryJamo = toJamo(query);
+        if (Array.from(queryJamo).every((ch) => CHOSUNG.includes(ch))) {
+            return toChosung(name).includes(queryJamo);
+        }
+        const head = query.slice(0, -1);
+        const last = toJamo(query.slice(-1));
+        for (let i = 0; i + head.length <= name.length; i++) {
+            if (name.startsWith(head, i) && toJamo(name.slice(i + head.length)).startsWith(last)) return true;
+        }
+        return false;
+    }
+
+    function normalizeDivision(value) {
+        const compact = value.replace(/\s+/g, '');
+        const match = compact.match(/^(-?\d+)부?$/);
+        return match ? `${parseInt(match[1], 10)}부` : compact;
+    }
+
+    function matchDivision(division, rawQuery) {
+        const query = normalizeDivision(rawQuery);
+        if (/^-?\d+부$/.test(query)) return division === query;
+        return query !== '' && division.includes(query);
+    }
+
+    function normalizeRacket(value) {
+        const lowered = value.trim().toLowerCase();
+        const compact = lowered.replace(/\s+/g, '');
+        if (/쉐이크|세이크|셰이크|shake/.test(compact)) return '쉐이크';
+        if (/펜|팬|pen/.test(compact)) return '펜홀더';
+        return lowered.charAt(0).toUpperCase() + lowered.slice(1);  // 파이썬 capitalize()와 동일
+    }
+
+    function matchRacket(racket, rawQuery) {
+        const query = normalizeRacket(rawQuery).toLowerCase();
+        return query !== '' && racket.toLowerCase().includes(query);
+    }
+
+    const FIELDS = {
+        '이름': { key: 'name', match: matchName, normalize: (value) => value },
+        '부수': { key: 'division', match: matchDivision, normalize: normalizeDivision },
+        '라켓': { key: 'racket', match: matchRacket, normalize: normalizeRacket },
+    };
+
+    const checkedRadio = () => radios.find((radio) => radio.checked) || radios[0];
+
+    function applySearch() {
+        const radio = checkedRadio();
+        const filter = radio.value;
+        const query = input.value.trim();
+        const { key, match, normalize } = FIELDS[filter];
+
+        let count = 0;
+        for (const card of cards) {
+            const visible = query !== '' && match(card.dataset[key], query);
+            card.hidden = !visible;
+            if (visible) count++;
+        }
+
+        resultHeader.hidden = !query;
+        initialState.hidden = !!query;
+        emptyState.hidden = !query || count > 0;
+        resultCount.textContent = count;
+        resultStatus.textContent = query ? `검색 결과 ${count}명` : '';
+        input.placeholder = radio.dataset.placeholder;
+
+        // 선택한 검색 기준의 칩만 보이고, 현재 검색어와 같은 칩을 강조
+        const active = query ? normalize(query) : '';
+        for (const group of chipGroups) {
+            group.hidden = group.dataset.chipsFor !== filter;
+            for (const chip of group.querySelectorAll('[data-chip]')) {
+                if (!group.hidden && chip.dataset.chip === active) chip.setAttribute('aria-current', 'true');
+                else chip.removeAttribute('aria-current');
+            }
+        }
+
+        // 새로고침/공유해도 같은 결과가 나오도록 주소창 갱신 (기록은 쌓지 않음)
+        const url = query ? `?${new URLSearchParams({ filter, query })}` : location.pathname;
+        history.replaceState(null, '', url);
+    }
+
+    input.addEventListener('input', applySearch);
+    radios.forEach((radio) => radio.addEventListener('change', applySearch));
+    form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        applySearch();
+        input.blur();  // 모바일 키보드 닫기
+    });
+
+    // 칩: 누르면 해당 값으로 검색, 이미 선택된 칩을 다시 누르면 해제
+    form.addEventListener('click', (event) => {
+        const chip = event.target.closest('[data-chip]');
+        if (!chip) return;
+        event.preventDefault();
+        input.value = chip.getAttribute('aria-current') === 'true' ? '' : chip.dataset.chip;
+        applySearch();
+    });
+
+    document.getElementById('reset-link').addEventListener('click', (event) => {
+        event.preventDefault();
+        input.value = '';
+        applySearch();
+        input.focus();
+    });
+
+    // 모바일: 검색창을 누르면 화면 위로 올려서 키보드에 결과가 가려지지 않게 함
+    const narrowScreen = window.matchMedia('(max-width: 639px)');
+    input.addEventListener('focus', () => {
+        if (narrowScreen.matches) setTimeout(() => form.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300);
+    });
+
+    applySearch();
+})();
+</script>
 {% endblock %}

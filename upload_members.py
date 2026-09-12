@@ -3,31 +3,22 @@ import csv
 import sys
 import argparse
 
-# Import normalization rules from app.py
+# Import normalization rules and Google Sheets helpers from app.py
 try:
-    from app import normalize_name, normalize_division, normalize_racket
+    from app import SHEET_NAME, create_sheet_client, get_credentials_path, normalize_name, normalize_division, normalize_racket
 except ImportError:
     print("[ERROR] app.py를 찾을 수 없습니다. 스크립트를 프로젝트 루트 폴더에서 실행해 주세요.")
     sys.exit(1)
 
 def get_gspread_client():
-    cred_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    cred_path = get_credentials_path()
     if not cred_path:
-        if os.path.exists("credentials.json"):
-            cred_path = "credentials.json"
-            
-    if not cred_path or not os.path.exists(cred_path):
         raise FileNotFoundError("구글 API 인증용 credentials.json 파일을 찾을 수 없습니다. 프로젝트 루트에 배치해 주세요.")
-        
+
     try:
-        import gspread
-        from oauth2client.service_account import ServiceAccountCredentials
-        
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_name(cred_path, scope)
-        return gspread.authorize(creds)
+        return create_sheet_client(cred_path)
     except ImportError:
-        raise ImportError("필수 라이브러리(gspread, oauth2client)가 가상환경에 설치되어 있지 않습니다. pip install -r requirements.txt를 실행해 주세요.")
+        raise ImportError("필수 라이브러리(gspread)가 가상환경에 설치되어 있지 않습니다. pip install -r requirements.txt를 실행해 주세요.")
 
 def parse_csv(file_path):
     if not os.path.exists(file_path):
@@ -81,7 +72,7 @@ def run_upload(file_path, mode):
         return 0, "업로드할 유효한 데이터가 없습니다."
         
     client = get_gspread_client()
-    spreadsheet = client.open("탁우회_명단")
+    spreadsheet = client.open(SHEET_NAME)
     sheet = spreadsheet.sheet1
     
     rows_to_upload = [[m["이름"], m["부수"], m["라켓"]] for m in members]

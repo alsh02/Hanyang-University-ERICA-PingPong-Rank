@@ -1,11 +1,27 @@
+import gzip
 import os
 import re
+import threading
+import time
 from collections import Counter
 # pyrefly: ignore [missing-import]
 from flask import Flask, render_template, request
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__)
 app.secret_key = "pingpong_rank_secret_key_for_flash"
+# Render 프록시 뒤에서도 https 절대 URL(링크 미리보기용 og:image 등)을 만들 수 있도록 설정
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1)
+
+SHEET_NAME = "탁우회_명단"
+# 구글 시트 캐시 유지 시간(초). 요청마다 API를 호출하면 느리고 분당 호출 한도도 금방 소진된다.
+SHEET_CACHE_TTL = int(os.environ.get("SHEET_CACHE_TTL", "60"))
+SHEET_RETRY_AFTER = 10  # 시트 연동 실패 후 재시도까지 대기(초)
+SHEET_TIMEOUT = 10  # 구글 API 응답 대기 한도(초)
+
+SEARCH_FIELDS = ("이름", "부수", "라켓")
+RACKET_ORDER = ("쉐이크", "펜홀더")
+UNASSIGNED_DIVISION = "미지정"
 
 # 더미 데이터 (구글 시트 로드 실패 시 대체)
 DUMMY_DATA = [
@@ -22,168 +38,306 @@ DUMMY_DATA = [
 ]
 
 def normalize_name(name):
-    if not name:
+    if name is None:
         return ""
-    # 공백 제거 및 문자열화
-    return str(name).strip().replace(" ", "")
+    # 모든 공백 제거 및 문자열화
+    return "".join(str(name).split())
 
 def normalize_division(div):
-    if not div:
+    if div is None:
         return ""
     div_str = str(div).strip().replace(" ", "")
-    # 음수 혹은 양수 정수만 입력된 경우 (예: '-1', '1', '2') -> 'X부'로 변경
-    if div_str.isdigit() or (div_str.startswith('-') and div_str[1:].isdigit()):
-        return f"{div_str}부"
-    # 만약 '-1부', '1부'와 같은 패턴이면 그대로 반환
-    match = re.match(r'^(-?\d+)부$', div_str)
+    # 정수만 입력했거나 'X부' 형태인 경우 (예: '-1', '0', '3', '03부') -> 'X부'로 통일
+    match = re.fullmatch(r'(-?\d+)부?', div_str)
     if match:
-        return div_str
-    # 그 외 포맷은 일단 그대로 반환
+        return f"{int(match.group(1))}부"
+    # 그 외 포맷(예: '선수부')은 그대로 반환
     return div_str
 
 def normalize_racket(racket):
-    if not racket:
+    if racket is None:
         return ""
     racket_str = str(racket).strip().lower()
-    if '세이크' in racket_str or '쉐이크' in racket_str or 'shake' in racket_str:
+    compact = racket_str.replace(" ", "")
+    if any(k in compact for k in ('쉐이크', '세이크', '셰이크', 'shake')):
         return '쉐이크'
-    if '펜' in racket_str or '팬' in racket_str or 'pen' in racket_str:
+    if any(k in compact for k in ('펜', '팬', 'pen')):
         return '펜홀더'
     return racket_str.capitalize()  # 원래 값 유지하되 첫글자 대문자화
 
+def division_number(div):
+    # '3부' -> 3, '-1부' -> -1, 숫자가 없으면 None
+    match = re.search(r'-?\d+', div)
+    return int(match.group()) if match else None
+
+def division_sort_key(div):
+    # -1부, 0부, 1부 ... 순서, 숫자가 없는 부수(선수부 등)는 그 뒤, 미입력은 맨 뒤
+    num = division_number(div)
+    if num is not None:
+        return (0, num, div)
+    return (1 if div else 2, 0, div)
+
+def racket_sort_key(racket):
+    # 쉐이크, 펜홀더, 그 외 전형 순서
+    return (RACKET_ORDER.index(racket) if racket in RACKET_ORDER else len(RACKET_ORDER), racket)
+
+def member_sort_key(member):
+    return (division_sort_key(member["부수"]), member["이름"])
+
+# ---------------------------------------------------------------------------
+# 검색 규칙 (templates/index.html의 즉시 검색 스크립트도 같은 규칙을 사용)
+# ---------------------------------------------------------------------------
+
+# 한글 자모 분해 테이블 (초성 19 · 중성 21 · 종성 28).
+# 겹모음/겹받침은 낱자로 풀어서 '고'가 '과'의, '달'이 '닭'의 앞부분이 되도록 한다.
+CHOSUNG = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ"
+JUNGSUNG = ("ㅏ", "ㅐ", "ㅑ", "ㅒ", "ㅓ", "ㅔ", "ㅕ", "ㅖ", "ㅗ", "ㅗㅏ", "ㅗㅐ", "ㅗㅣ", "ㅛ", "ㅜ",
+            "ㅜㅓ", "ㅜㅔ", "ㅜㅣ", "ㅠ", "ㅡ", "ㅡㅣ", "ㅣ")
+JONGSUNG = ("", "ㄱ", "ㄲ", "ㄱㅅ", "ㄴ", "ㄴㅈ", "ㄴㅎ", "ㄷ", "ㄹ", "ㄹㄱ", "ㄹㅁ", "ㄹㅂ", "ㄹㅅ", "ㄹㅌ",
+            "ㄹㅍ", "ㄹㅎ", "ㅁ", "ㅂ", "ㅂㅅ", "ㅅ", "ㅆ", "ㅇ", "ㅈ", "ㅊ", "ㅋ", "ㅌ", "ㅍ", "ㅎ")
+COMPOUND_JAMO = {"ㄳ": "ㄱㅅ", "ㄵ": "ㄴㅈ", "ㄶ": "ㄴㅎ", "ㄺ": "ㄹㄱ", "ㄻ": "ㄹㅁ", "ㄼ": "ㄹㅂ", "ㄽ": "ㄹㅅ",
+                 "ㄾ": "ㄹㅌ", "ㄿ": "ㄹㅍ", "ㅀ": "ㄹㅎ", "ㅄ": "ㅂㅅ", "ㅘ": "ㅗㅏ", "ㅙ": "ㅗㅐ", "ㅚ": "ㅗㅣ",
+                 "ㅝ": "ㅜㅓ", "ㅞ": "ㅜㅔ", "ㅟ": "ㅜㅣ", "ㅢ": "ㅡㅣ"}
+
+def _syllable_index(ch):
+    code = ord(ch) - 0xAC00
+    return code if 0 <= code < 11172 else -1
+
+def to_jamo(text):
+    # '홍길동' -> 'ㅎㅗㅇㄱㅣㄹㄷㅗㅇ'
+    parts = []
+    for ch in text:
+        code = _syllable_index(ch)
+        if code < 0:
+            parts.append(COMPOUND_JAMO.get(ch, ch))
+        else:
+            parts.append(CHOSUNG[code // 588] + JUNGSUNG[code % 588 // 28] + JONGSUNG[code % 28])
+    return "".join(parts).lower()
+
+def to_chosung(text):
+    # '홍길동' -> 'ㅎㄱㄷ'
+    parts = []
+    for ch in text:
+        code = _syllable_index(ch)
+        parts.append(ch if code < 0 else CHOSUNG[code // 588])
+    return "".join(parts)
+
+def match_name(name, query):
+    # 이름 부분 일치. 초성만 입력하면 초성으로 비교하고('ㅎㄱㄷ' -> 홍길동),
+    # 마지막 글자는 자모 단위로 비교해 입력 중인 글자도 찾아준다('호', '홍ㄱ' -> 홍길동).
+    query = normalize_name(query).lower()
+    if not query:
+        return False
+    name = name.lower()
+    query_jamo = to_jamo(query)
+    if all(ch in CHOSUNG for ch in query_jamo):
+        return query_jamo in to_chosung(name)
+    head, last = query[:-1], to_jamo(query[-1])
+    return any(
+        name.startswith(head, i) and to_jamo(name[i + len(head):]).startswith(last)
+        for i in range(len(name) - len(head) + 1)
+    )
+
+def match_division(division, query):
+    # 숫자 부수는 정확히 일치 ('1', '1부' -> 1부만, -1부나 11부는 제외). 그 외는 부분 일치
+    query = normalize_division(query)
+    if re.fullmatch(r'-?\d+부', query):
+        return division == query
+    return bool(query) and query in division
+
+def match_racket(racket, query):
+    # 오타/동의어 보정 후 부분 일치 ('세이크', 'shake' -> 쉐이크, '펜' -> 펜홀더)
+    query = normalize_racket(query).lower()
+    return bool(query) and query in racket.lower()
+
+MATCHERS = {"이름": match_name, "부수": match_division, "라켓": match_racket}
+NORMALIZERS = {"이름": normalize_name, "부수": normalize_division, "라켓": normalize_racket}
+
+# ---------------------------------------------------------------------------
+# 구글 시트 연동
+# ---------------------------------------------------------------------------
+
+def get_credentials_path():
+    # 환경변수 GOOGLE_APPLICATION_CREDENTIALS 또는 로컬 credentials.json (없으면 None)
+    cred_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or "credentials.json"
+    return cred_path if os.path.exists(cred_path) else None
+
+def create_sheet_client(cred_path):
+    import gspread
+
+    # 서비스 계정 키(JSON)로 인증 (Sheets + Drive 권한)
+    client = gspread.service_account(filename=cred_path)
+    client.set_timeout(SHEET_TIMEOUT)
+    return client
+
+def find_column(headers, *keywords):
+    # 키워드와 같은 헤더를 우선 찾고, 없으면 키워드를 포함하는 헤더를 찾는다 (예: '이름', 'Name')
+    lowered = [str(h).strip().lower() for h in headers]
+    for i, header in enumerate(lowered):
+        if header in keywords:
+            return i
+    for i, header in enumerate(lowered):
+        if any(k in header for k in keywords):
+            return i
+    return None
+
+def parse_sheet_rows(rows):
+    # 시트 값(첫 행은 헤더)을 정규화된 부원 목록으로 변환
+    if not rows:
+        return []
+    headers = rows[0]
+    columns = {
+        "이름": find_column(headers, "이름", "name"),
+        "부수": find_column(headers, "부수", "division"),
+        "라켓": find_column(headers, "라켓", "racket"),
+    }
+    if columns["이름"] is None:
+        raise ValueError(f"시트에 '이름' 열이 없습니다. (감지된 헤더: {headers})")
+
+    members = []
+    for row in rows[1:]:
+        values = {key: row[i] if i is not None and i < len(row) else "" for key, i in columns.items()}
+        # 데이터가 모두 빈 행은 건너뜀
+        if not any(str(v).strip() for v in values.values()):
+            continue
+        members.append({
+            "이름": normalize_name(values["이름"]),
+            "부수": normalize_division(values["부수"]),
+            "라켓": normalize_racket(values["라켓"]),
+        })
+    return members
+
+_sheet_lock = threading.Lock()
+_sheet_client = None
+_sheet_cache = {"members": None, "expires_at": 0.0}
+
+def fetch_sheet_members(cred_path):
+    global _sheet_client
+    if _sheet_client is None:
+        _sheet_client = create_sheet_client(cred_path)
+    # get_all_records()는 '0'을 숫자 0으로 바꾸고 헤더가 중복되면 실패하므로 원본 문자열로 받는다
+    rows = _sheet_client.open(SHEET_NAME).sheet1.get_all_values()
+    return parse_sheet_rows(rows)
+
 def get_sheet_data():
-    # 1. 환경변수 확인 또는 로컬 credentials.json 확인
-    cred_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    # (부원 목록, 더미 데이터 여부)를 반환한다.
+    # 시트는 SHEET_CACHE_TTL초 동안 캐시하고, 연동 오류가 나면 마지막으로 불러온 데이터를 유지한다.
+    cred_path = get_credentials_path()
     if not cred_path:
-        if os.path.exists("credentials.json"):
-            cred_path = "credentials.json"
-            
-    if not cred_path or not os.path.exists(cred_path):
         # 환경 변수 및 파일이 없으면 더미 데이터 반환
         return DUMMY_DATA, True
-        
-    try:
-        import gspread
-        from oauth2client.service_account import ServiceAccountCredentials
-        
-        # 구글 API 인증 및 시트 오픈
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_name(cred_path, scope)
-        client = gspread.authorize(creds)
-        
-        # '탁우회_명단' 스프레드시트 열기
-        spreadsheet = client.open("탁우회_명단")
-        sheet = spreadsheet.sheet1
-        
-        # 전체 데이터 가져오기
-        records = sheet.get_all_records()
-        
-        # 데이터 정규화 및 파싱
-        cleaned_data = []
-        for row in records:
-            name_val = row.get("이름") or row.get("name") or ""
-            div_val = row.get("부수") or row.get("division") or ""
-            racket_val = row.get("라켓") or row.get("racket") or ""
-            
-            # 데이터가 모두 빈 행은 건너뜀
-            if not str(name_val).strip() and not str(div_val).strip() and not str(racket_val).strip():
-                continue
-                
-            cleaned_data.append({
-                "이름": normalize_name(name_val),
-                "부수": normalize_division(div_val),
-                "라켓": normalize_racket(racket_val)
-            })
-        return cleaned_data, False
-    except Exception as e:
-        print(f"[ERROR] 구글 시트 연동 오류 발생: {e}. 더미 데이터를 사용합니다.")
+
+    with _sheet_lock:
+        now = time.monotonic()
+        if now >= _sheet_cache["expires_at"]:
+            try:
+                _sheet_cache["members"] = fetch_sheet_members(cred_path)
+                _sheet_cache["expires_at"] = now + SHEET_CACHE_TTL
+            except Exception as e:
+                app.logger.error("구글 시트 연동 오류 발생: %s", e)
+                _sheet_cache["expires_at"] = now + SHEET_RETRY_AFTER
+        members = _sheet_cache["members"]
+
+    if members is None:
+        # 한 번도 불러오지 못했다면 더미 데이터 사용
         return DUMMY_DATA, True
+    return members, False
+
+@app.after_request
+def compress_html(response):
+    # 검색 페이지는 전체 부원 카드를 담고 있어 HTML이 크므로 gzip으로 압축 (약 1/10 크기)
+    if (
+        response.mimetype == "text/html"
+        and response.status_code == 200
+        and not response.direct_passthrough
+        and "Content-Encoding" not in response.headers
+        and "gzip" in request.headers.get("Accept-Encoding", "")
+    ):
+        response.set_data(gzip.compress(response.get_data(), compresslevel=6))
+        response.headers["Content-Encoding"] = "gzip"
+        response.vary.add("Accept-Encoding")
+    return response
 
 @app.route("/", methods=["GET"])
 def index():
     search_filter = request.args.get("filter", "이름")  # 기본값: 이름
+    if search_filter not in SEARCH_FIELDS:
+        search_filter = "이름"
     search_query = request.args.get("query", "").strip()
-    
-    # 데이터 로드
+
+    # 데이터 로드 (부수 오름차순 -> 이름순)
     members, is_dummy = get_sheet_data()
-    
-    # 검색 적용 (부분 매칭)
-    filtered_members = []
-    is_initial = True
-    
-    if search_query:
-        is_initial = False
-        for m in members:
-            val_to_compare = m.get(search_filter, "")
-            # 대소문자 무관 및 부분 일치 비교
-            if search_query.lower() in str(val_to_compare).lower():
-                filtered_members.append(m)
-    else:
-        filtered_members = []  # 첫 진입 시 빈 목록 반환 (TMI 방지)
-        
+    members = sorted(members, key=member_sort_key)
+
+    # 카드는 전부 렌더링하되 검색어와 일치하는 부원만 노출한다.
+    # 첫 진입 시에는 아무도 노출하지 않음 (TMI 방지). 브라우저에서는 입력 즉시 JS가 다시 필터링한다.
+    matcher = MATCHERS[search_filter]
+    cards = [(m, bool(search_query) and matcher(m[search_filter], search_query)) for m in members]
+
     return render_template(
         "index.html",
-        members=filtered_members,
+        cards=cards,
+        match_count=sum(1 for _, matched in cards if matched),
+        total_count=len(members),
+        divisions=sorted({m["부수"] for m in members if m["부수"]}, key=division_sort_key),
+        rackets=sorted({m["라켓"] for m in members if m["라켓"]}, key=racket_sort_key),
         filter=search_filter,
         query=search_query,
+        active_value=NORMALIZERS[search_filter](search_query) if search_query else "",
         is_dummy=is_dummy,
-        is_initial=is_initial
+        is_initial=not search_query
     )
 
 @app.route("/stats", methods=["GET"])
 def stats():
     # 데이터 로드
     members, is_dummy = get_sheet_data()
-    
-    # 1. 부수별 인원 분포 계산
-    divisions = [m["부수"] for m in members if m["부수"]]
-    total_count = len(divisions)
-    
-    # 부수별 집계
-    div_counts = Counter(divisions)
-    
-    # 부수 정렬 기준 (예: -1부, 0부, 1부, ... 순)
-    def get_div_num(div_name):
-        match = re.search(r'-?\d+', div_name)
-        return int(match.group()) if match else 999
-        
-    sorted_divs = sorted(div_counts.keys(), key=get_div_num)
-    
-    # 차트용 데이터 가공 (부수명, 인원수, 비율)
-    div_stats = []
-    for div in sorted_divs:
-        count = div_counts[div]
-        ratio = round((count / total_count) * 100, 1) if total_count > 0 else 0
-        div_stats.append({
-            "division": div,
+    total_count = len(members)
+
+    # 1. 부수별 그룹화 (부수 오름차순 및 이름순, 부수 미입력 부원은 '미지정' 그룹으로 맨 뒤)
+    grouped = {}
+    for m in sorted(members, key=member_sort_key):
+        grouped.setdefault(m["부수"] or UNASSIGNED_DIVISION, []).append(m)
+
+    # 2. 부수별 인원 분포 + 부수별 라켓 구성 (막대 길이는 인원이 가장 많은 부수 기준)
+    max_count = max((len(ms) for ms in grouped.values()), default=0)
+    groups = []
+    for i, (division, div_members) in enumerate(grouped.items(), start=1):
+        count = len(div_members)
+        racket_counts = Counter(m["라켓"] if m["라켓"] in RACKET_ORDER else "기타" for m in div_members)
+        groups.append({
+            "division": division,
+            "anchor": f"group-{i}",
+            "members": div_members,
             "count": count,
-            "ratio": ratio
+            "ratio": round((count / total_count) * 100, 1),
+            "width": round((count / max_count) * 100, 1),
+            "rackets": [(r, racket_counts[r]) for r in (*RACKET_ORDER, "기타") if racket_counts[r]],
         })
-        
-    # 2. 부수별 그룹화 목록
-    grouped_members = {}
-    for div in sorted_divs:
-        members_in_div = [m for m in members if m["부수"] == div]
-        members_in_div = sorted(members_in_div, key=lambda x: x["이름"])
-        grouped_members[div] = members_in_div
-        
-    # 3. 추가 통계: 전형별(라켓) 인원 분포
-    rackets = [m["라켓"] for m in members if m["라켓"]]
-    racket_counts = Counter(rackets)
+    present = {name for g in groups for name, _ in g["rackets"]}
+    legend = [r for r in (*RACKET_ORDER, "기타") if r in present]
+
+    # 3. 추가 통계: 전형별(라켓) 인원 분포 및 평균 부수
+    racket_members = {}
+    for m in members:
+        if m["라켓"]:
+            racket_members.setdefault(m["라켓"], []).append(m)
+    total_rackets = sum(len(ms) for ms in racket_members.values())
     racket_stats = []
-    total_rackets = len(rackets)
-    for racket, count in racket_counts.items():
-        ratio = round((count / total_rackets) * 100, 1) if total_rackets > 0 else 0
+    for racket in sorted(racket_members, key=racket_sort_key):
+        ms = racket_members[racket]
+        nums = [n for n in (division_number(m["부수"]) for m in ms) if n is not None]
         racket_stats.append({
             "racket": racket,
-            "count": count,
-            "ratio": ratio
+            "count": len(ms),
+            "ratio": round((len(ms) / total_rackets) * 100, 1),
+            "avg_division": round(sum(nums) / len(nums), 1) if nums else None,
         })
-        
+
     return render_template(
         "stats.html",
-        div_stats=div_stats,
-        grouped_members=grouped_members,
+        groups=groups,
+        legend=legend,
         racket_stats=racket_stats,
         total_count=total_count,
         is_dummy=is_dummy
