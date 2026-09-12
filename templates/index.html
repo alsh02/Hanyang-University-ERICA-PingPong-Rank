@@ -55,16 +55,22 @@
         </button>
     </div>
 
-    <!-- 부수 / 라켓: 버튼으로 바로 선택 -->
+    <!-- 부수 / 라켓: 버튼으로 바로 선택 (개수가 몇 개든 줄이 맞도록 같은 폭의 격자로 배치) -->
+    {% set control_layouts = {
+        '부수': 'flex flex-wrap justify-center gap-2',
+        '라켓': 'mx-auto grid max-w-sm grid-cols-2 gap-2',
+    } %}
+    {# 부수 버튼은 한 줄에 모바일 4개·데스크톱 6개씩 같은 폭으로, 마지막 줄은 가운데 정렬 #}
+    {% set chip_widths = {'부수': 'w-[calc((100%_-_1.5rem)/4)] sm:w-[calc((100%_-_2.5rem)/6)]', '라켓': 'w-full'} %}
     {% for field, options in [('부수', divisions), ('라켓', rackets)] %}
-    <div data-control-for="{{ field }}" class="mt-3 flex flex-wrap justify-center gap-2" {% if filter != field %}hidden{% endif %}>
+    <div data-control-for="{{ field }}" class="mt-3 {{ control_layouts[field] }}" {% if filter != field %}hidden{% endif %}>
         {% for option in options %}
         <a href="{{ url_for('index', filter=field, query=option) }}" data-chip="{{ option }}" {% if filter == field and active_value == option %}aria-current="true"{% endif %}
-           class="inline-flex h-11 items-center rounded-xl border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition-colors hover:border-red-400 hover:text-red-700 aria-[current=true]:border-red-600 aria-[current=true]:bg-red-600 aria-[current=true]:text-white dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-red-500 dark:hover:text-red-300 dark:aria-[current=true]:border-red-500 dark:aria-[current=true]:bg-rubber dark:aria-[current=true]:text-white">
+           class="inline-flex h-11 {{ chip_widths[field] }} items-center justify-center rounded-xl border border-zinc-200 bg-white px-2 text-sm font-semibold text-zinc-700 transition-colors hover:border-red-400 hover:text-red-700 aria-[current=true]:border-red-600 aria-[current=true]:bg-red-600 aria-[current=true]:text-white dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-red-500 dark:hover:text-red-300 dark:aria-[current=true]:border-red-500 dark:aria-[current=true]:bg-rubber dark:aria-[current=true]:text-white">
             {{ option }}
         </a>
         {% else %}
-        <p class="text-sm text-zinc-500 dark:text-zinc-400">표시할 {{ field }} 정보가 없습니다.</p>
+        <p class="col-span-full text-center text-sm text-zinc-500 dark:text-zinc-400">표시할 {{ field }} 정보가 없습니다.</p>
         {% endfor %}
     </div>
     {% endfor %}
