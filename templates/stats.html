@@ -25,14 +25,14 @@
 <div class="mb-4 flex flex-wrap gap-3">
     <div class="flex-1 basis-48 rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
         <p class="text-xs text-slate-500 dark:text-slate-400">전체 부원</p>
-        <p class="font-outfit text-2xl font-extrabold">{{ total_count }}<span class="ml-0.5 text-base font-bold">명</span></p>
+        <p class="text-2xl font-extrabold">{{ total_count }}<span class="ml-0.5 text-base font-bold">명</span></p>
     </div>
     {% for racket in racket_stats %}
     <div class="flex-1 basis-48 rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
         <p class="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
             <span class="h-2.5 w-2.5 rounded-sm {{ racket_colors.get(racket.racket, racket_colors['기타']) }}"></span>{{ racket.racket }}
         </p>
-        <p class="font-outfit text-2xl font-extrabold">
+        <p class="text-2xl font-extrabold">
             {{ racket.count }}<span class="ml-0.5 text-base font-bold">명</span>
             <span class="ml-1 font-sans text-xs font-medium text-slate-500 dark:text-slate-400">{{ racket.ratio }}%{% if racket.avg_division is not none %} · 평균 {{ racket.avg_division }}부{% endif %}</span>
         </p>
@@ -63,7 +63,7 @@
                 <div class="mb-1.5 flex items-center justify-between text-xs">
                     <span class="font-semibold {{ 'text-slate-500 dark:text-slate-400' if g.division == '미지정' else 'text-slate-700 dark:text-slate-200' }}">{{ g.division }}</span>
                     <span class="text-slate-500 dark:text-slate-400">
-                        <strong class="font-outfit text-slate-900 dark:text-slate-100">{{ g.count }}</strong>명 · {{ g.ratio }}%
+                        <strong class="text-slate-900 dark:text-slate-100">{{ g.count }}</strong>명 · {{ g.ratio }}%
                     </span>
                 </div>
                 <!-- Stacked Bar: 길이는 인원이 가장 많은 부수 기준, 조각은 라켓 전형별 인원 -->
@@ -113,7 +113,7 @@
                         {% if g.division == '미지정' %}
                         <span class="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">부수 미지정</span>
                         {% else %}
-                        <span class="rounded-md border border-red-200 bg-red-50 px-2 py-0.5 font-outfit text-xs text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">{{ g.division }}</span>
+                        <span class="rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-xs text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">{{ g.division }}</span>
                         {% endif %}
                     </h3>
                     <span class="flex items-center gap-2.5 text-[11px] text-slate-500 dark:text-slate-400">
@@ -122,7 +122,7 @@
                             <span class="h-2 w-2 rounded-sm {{ racket_colors[racket] }}"></span>{{ racket }} {{ count }}
                         </span>
                         {% endfor %}
-                        <span>총 <strong class="font-outfit text-slate-900 dark:text-slate-100">{{ g.count }}</strong>명</span>
+                        <span>총 <strong class="text-slate-900 dark:text-slate-100">{{ g.count }}</strong>명</span>
                     </span>
                 </div>
 
