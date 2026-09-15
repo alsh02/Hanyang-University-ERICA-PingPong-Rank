@@ -109,7 +109,7 @@
                 경기 시작
             </button>
             <p class="mt-3 text-center text-xs text-zinc-400 dark:text-zinc-500">
-                화면 양쪽을 누르면 점수가 올라갑니다. 키보드 ← → 또는 A · L 키도 사용할 수 있습니다.
+                경기를 시작하면 자동으로 전체화면이 됩니다. 화면 양쪽을 누르면 점수가 올라가고, 키보드 ← → 또는 A · L 키도 사용할 수 있습니다.
             </p>
         </div>
     </section>
@@ -312,7 +312,8 @@
 
     function startMatch() {
         document.activeElement?.blur?.();   // 입력칸에 커서가 남아 있으면 경기 중에도 키보드·보안 경고가 따라온다
-        if (resumeFullscreen) { resumeFullscreen = false; enterFullscreen(); }
+        // 버튼을 누른 흐름 안에서 요청해야 브라우저가 전체화면을 허용한다
+        if (!fullscreenElement()) enterFullscreen({ silent: true }).then((entered) => { autoFullscreen = entered; });
         state.phase = 'playing';
         state.points = [0, 0];
         state.games = [];
@@ -326,6 +327,7 @@
     }
 
     function backToSetup() {
+        if (autoFullscreen) { autoFullscreen = false; exitFullscreen(); }
         state.phase = 'setup';
         setup.hidden = false;
         match.hidden = true;
@@ -346,17 +348,22 @@
     }
 
     // ---------- 전체화면 ----------
+    // 경기를 시작하면 자동으로 전체화면에 들어가고, 설정 화면으로 돌아오면 (자동으로 들어간 경우에만) 빠져나온다.
     // 사파리(아이패드 포함)는 전체화면에서 글자를 입력하면 '전체 화면인 상태에서 입력하는 것 같습니다' 경고를
-    // 띄운다. 주소창이 가려진 화면에서의 입력을 막기 위한 장치라 끌 수 없으므로, 이름을 입력할 때는
-    // 전체화면을 잠시 풀고 경기를 시작할 때 다시 들어간다.
-    let resumeFullscreen = false;
+    // 띄운다. 주소창이 가려진 화면에서의 입력을 막기 위한 장치라 끌 수 없으므로, 이름을 입력할 때는 전체화면을 푼다.
+    let autoFullscreen = false;   // 경기 시작 때 자동으로 들어간 전체화면인지
     const fullscreenElement = () => document.fullscreenElement || document.webkitFullscreenElement;
 
-    function enterFullscreen() {
+    // silent: 경기 시작처럼 자동으로 부를 때는 지원하지 않는 브라우저에서 안내를 띄우지 않는다
+    function enterFullscreen({ silent = false } = {}) {
         const el = document.documentElement;
         const request = el.requestFullscreen || el.webkitRequestFullscreen;
-        if (!request) return showToast('이 브라우저에서는 전체화면을 지원하지 않습니다');
-        Promise.resolve(request.call(el)).catch(() => showToast('이 브라우저에서는 전체화면을 지원하지 않습니다'));
+        const notSupported = () => {
+            if (!silent) showToast('이 브라우저에서는 전체화면을 지원하지 않습니다');
+            return false;
+        };
+        if (!request) return Promise.resolve(notSupported());
+        return Promise.resolve(request.call(el)).then(() => true).catch(notSupported);
     }
 
     function exitFullscreen() {
@@ -366,14 +373,14 @@
 
     // 전체화면이 완전히 풀린 뒤에 입력칸으로 커서를 옮긴다
     function leaveFullscreenThenFocus(input) {
-        resumeFullscreen = true;
+        autoFullscreen = false;
         const focusInput = () => {
             ['fullscreenchange', 'webkitfullscreenchange'].forEach((type) => document.removeEventListener(type, focusInput));
             input.focus();
         };
         ['fullscreenchange', 'webkitfullscreenchange'].forEach((type) => document.addEventListener(type, focusInput));
         exitFullscreen();
-        showToast('이름을 입력하는 동안 전체화면을 잠시 해제합니다');
+        showToast('전체화면 잠시 해제 · 경기를 시작하면 다시 전체화면');
     }
 
     // ---------- 선수 선택: 이름을 입력하면 아래 목록에서 고른다 ----------
@@ -565,8 +572,9 @@
     });
 
     $('fullscreen-button').addEventListener('click', () => {
-        if (fullscreenElement()) { resumeFullscreen = false; exitFullscreen(); }
-        else { resumeFullscreen = false; enterFullscreen(); }
+        autoFullscreen = false;
+        if (fullscreenElement()) exitFullscreen();
+        else enterFullscreen();
     });
     ['fullscreenchange', 'webkitfullscreenchange'].forEach((type) => document.addEventListener(type, () => {
         // 키보드가 올라온 채로 전체화면에 들어가면 경고가 뜨므로 입력칸의 커서를 내려 둔다
