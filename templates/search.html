@@ -92,28 +92,25 @@
     </div>
 
     <!-- Results Grid (전체 카드 중 검색어와 일치하는 카드만 노출) -->
-    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {% set racket_bars = {'쉐이크': 'bg-blue-600', '펜홀더': 'bg-teal-600'} %}
-        {% set racket_dots = {'쉐이크': 'bg-blue-600 dark:bg-blue-400', '펜홀더': 'bg-teal-600 dark:bg-teal-400'} %}
+    <!-- 카드는 명단표의 한 줄: 부수 · 이름 · 라켓을 한 기준선에 놓고 글자 크기와 색만으로 위계를 만든다 -->
+    <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-3">
         {% for member, matched in cards %}
         <article data-member data-name="{{ member.이름 }}" data-division="{{ member.부수 }}" data-racket="{{ member.라켓 }}" {% if not matched %}hidden{% endif %}
-                 class="relative overflow-hidden rounded-xl border border-zinc-200 bg-white py-3.5 pl-5 pr-4 transition-colors hover:border-red-300 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-red-500/40">
-            <!-- 라켓 전형을 왼쪽 색 막대로 표시 -->
-            <span class="absolute inset-y-0 left-0 w-1 {{ racket_bars.get(member.라켓, 'bg-zinc-300 dark:bg-zinc-700') }}"></span>
-            <div class="flex items-center justify-between gap-3">
-                <div class="min-w-0">
-                    <h3 class="truncate text-lg font-bold tracking-tight">{{ member.이름 }}</h3>
-                    <p class="mt-1 flex items-center gap-1.5 text-xs font-medium text-zinc-500 dark:text-zinc-400">
-                        <span class="h-1.5 w-1.5 flex-shrink-0 rounded-full {{ racket_dots.get(member.라켓, 'bg-zinc-400') }}"></span>
-                        {{ member.라켓 or '라켓 미입력' }}
-                    </p>
-                </div>
-                {% if member.부수 %}
-                <span class="flex-shrink-0 rounded-lg bg-red-50 px-3 py-1.5 text-base font-extrabold tracking-tight text-red-700 dark:bg-red-500/10 dark:text-red-300">{{ member.부수 }}</span>
+                 class="flex items-baseline gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900">
+            <!-- 부수 칸: 폭(4rem)과 줄 높이(text-3xl)를 고정해, 값이 없거나 글자가 작아도 옆 카드와 이름 시작선·카드 높이가 같다 -->
+            {% set number = member.부수[:-1] if member.부수.endswith('부') else '' %}
+            <p class="min-w-[4rem] flex-shrink-0 whitespace-nowrap text-3xl leading-none">
+                {% if number and number.lstrip('-').isdigit() %}
+                <span class="font-extrabold leading-none tracking-tight tabular-nums text-red-600 dark:text-red-400">{{ number }}</span><span class="ml-0.5 text-sm font-bold leading-none text-zinc-500 dark:text-zinc-400">부</span>
+                {% elif member.부수 %}
+                {# 숫자가 아닌 부수(예: 선수부)는 통째로, 한 단계 작게 #}
+                <span class="text-base font-extrabold leading-none tracking-tight text-red-600 dark:text-red-400">{{ member.부수 }}</span>
                 {% else %}
-                <span class="flex-shrink-0 rounded-lg bg-zinc-100 px-3 py-1.5 text-xs font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">미지정</span>
+                <span class="text-sm font-semibold leading-none text-zinc-400 dark:text-zinc-500">미지정</span>
                 {% endif %}
-            </div>
+            </p>
+            <h3 class="min-w-0 flex-1 truncate text-lg font-bold tracking-tight">{{ member.이름 }}</h3>
+            <p class="flex-shrink-0 text-xs font-medium {{ 'text-zinc-500 dark:text-zinc-400' if member.라켓 else 'text-zinc-400 dark:text-zinc-500' }}">{{ member.라켓 or '라켓 미입력' }}</p>
         </article>
         {% endfor %}
     </div>
