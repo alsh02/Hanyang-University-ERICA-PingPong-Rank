@@ -92,11 +92,11 @@
     </div>
 
     <!-- Results Grid (전체 카드 중 검색어와 일치하는 카드만 노출) -->
-    <!-- 카드는 명단표의 한 줄: 부수 · 이름 · 라켓을 한 기준선에 놓고 글자 크기와 색만으로 위계를 만든다 -->
+    <!-- 카드는 명단표의 한 줄: 부수 · 이름 · 라켓을 세로 가운데에 놓고 글자 크기와 색만으로 위계를 만든다 -->
     <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-3">
         {% for member, matched in cards %}
         <article data-member data-name="{{ member.이름 }}" data-division="{{ member.부수 }}" data-racket="{{ member.라켓 }}" {% if not matched %}hidden{% endif %}
-                 class="flex items-baseline gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900">
+                 class="flex items-center gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900">
             <!-- 부수 칸: 폭(4rem)과 줄 높이(text-3xl)를 고정해, 값이 없거나 글자가 작아도 옆 카드와 이름 시작선·카드 높이가 같다 -->
             {% set number = member.부수[:-1] if member.부수.endswith('부') else '' %}
             <p class="min-w-[4rem] flex-shrink-0 whitespace-nowrap text-3xl leading-none">
