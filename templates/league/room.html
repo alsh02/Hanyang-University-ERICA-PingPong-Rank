@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 
-{% block title %}토너먼트 {{ code }} · POWERDRIVE HANYANG{% endblock %}
+{% block title %}{{ room_name or '토너먼트' }} · POWERDRIVE HANYANG{% endblock %}
 
 {% block content %}
 <style>
@@ -54,6 +54,8 @@
     <section id="bracket" hidden>
         <div id="my-match" hidden class="mx-auto mb-5 max-w-2xl"></div>
         <div id="champions" hidden class="mx-auto mb-5 max-w-3xl"></div>
+        <!-- 운영진: 선수가 보낸 결과 중 아직 확정하지 않은 것 -->
+        <div id="pending-reports" hidden class="mx-auto mb-4 max-w-3xl rounded-2xl border-2 border-amber-300 bg-amber-50 p-4 dark:border-amber-500/40 dark:bg-amber-500/10"></div>
         <div id="group-tabs" class="mb-4 flex flex-wrap justify-center gap-2"></div>
         <div id="admin-tools" hidden class="mx-auto mb-4 flex max-w-3xl flex-wrap items-center justify-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs dark:border-zinc-800 dark:bg-zinc-900"></div>
         <div id="rounds" class="-mx-4 flex gap-3 overflow-x-auto px-4 pb-3 sm:mx-0 sm:px-0"></div>
@@ -105,11 +107,11 @@
     let tournament = null, activeGroup = null, pendingAction = null;
 
     // ---------- 공통 ----------
-    function showToast(text) {
+    function showToast(text, duration = 2800) {
         const toast = $('toast');
         toast.textContent = text; toast.hidden = false;
         clearTimeout(showToast.timer);
-        showToast.timer = setTimeout(() => { toast.hidden = true; }, 2800);
+        showToast.timer = setTimeout(() => { toast.hidden = true; }, duration);
     }
     async function api(path, body) {
         const headers = { 'Content-Type': 'application/json' };
@@ -157,9 +159,73 @@
         return `<button type="button" ${attrs} class="inline-flex h-8 items-center justify-center gap-1 rounded-lg px-2.5 text-xs font-semibold transition-colors ${styles[style]}">${label}</button>`;
     };
 
+    // ---------- 운영진 알림: 선수가 결과를 보내면 소리·진동·배지로 알린다 ----------
+    let baseTitle = document.title;   // 대회 이름을 불러오면 그 이름으로 바뀐다
+    const seenReports = new Set();
+    let firstRender = true, audioCtx = null;
+    let soundOn = storage.get('league_sound') !== 'off';
+    const stageOf = (groupKey, m) => m.third ? '3·4위전' : tournament.brackets[groupKey].labels[m.round];
+    const pendingReports = (t) => Object.entries(t.brackets || {}).flatMap(([k, b]) =>
+        b.matches.concat(b.third ? [b.third] : []).filter((m) => m.status === 'pending' && m.report).map((m) => ({ group: k, m })));
+    const reportKey = (m) => `${m.id}|${m.report.at}|${m.report.winner}|${JSON.stringify(m.report.games)}`;
+
+    function beep() {
+        if (!soundOn) return;
+        try {
+            audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx.state !== 'running') return;   // 아직 화면을 한 번도 누르지 않아 소리를 낼 수 없음
+            [880, 1175].forEach((freq, i) => {
+                const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+                osc.frequency.value = freq; gain.gain.value = 0.06;
+                osc.connect(gain); gain.connect(audioCtx.destination);
+                osc.start(audioCtx.currentTime + i * 0.16); osc.stop(audioCtx.currentTime + i * 0.16 + 0.14);
+            });
+        } catch (e) {}
+    }
+    // 브라우저는 사용자가 한 번 누른 뒤에만 소리를 허용하므로, 운영진의 첫 조작 때 준비해 둔다
+    root.addEventListener('pointerdown', () => {
+        if (!canAdmin) return;
+        try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume(); } catch (e) {}
+    });
+
+    function notifyNewReports(t) {
+        const pending = pendingReports(t);
+        document.title = (canAdmin && pending.length ? `(${pending.length}) ` : '') + baseTitle;
+        renderPendingPanel(pending);
+        const fresh = pending.filter(({ m }) => !seenReports.has(reportKey(m)));
+        pending.forEach(({ m }) => seenReports.add(reportKey(m)));
+        if (firstRender) { firstRender = false; return; }   // 처음 열었을 때 이미 있던 보고는 패널로만
+        if (!canAdmin || !fresh.length) return;
+        const { group, m } = fresh[fresh.length - 1];
+        showToast(`${m.report.by} 결과 보고 · ${groupName(group)} ${stageOf(group, m)} · 승자 ${m.report.winner}${fresh.length > 1 ? ` 외 ${fresh.length - 1}건` : ''}`, 6000);
+        try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) {}
+        beep();
+    }
+
+    function renderPendingPanel(pending) {
+        const panel = $('pending-reports');
+        panel.hidden = !(canAdmin && pending.length);
+        if (panel.hidden) return;
+        panel.innerHTML = `<div class="mb-2 flex items-center justify-between">
+                <p class="text-sm font-bold text-amber-900 dark:text-amber-200">확인 대기 ${pending.length}건 <span class="font-medium text-amber-700 dark:text-amber-300">· 선수가 보낸 결과입니다</span></p>
+                ${button(soundOn ? '알림음 켬' : '알림음 꺼짐', 'data-sound', 'quiet')}
+            </div>
+            <ul class="divide-y divide-amber-200 dark:divide-amber-500/30">${pending.map(({ group, m }) => `
+                <li class="flex flex-wrap items-center justify-between gap-2 py-2">
+                    <span class="min-w-0 text-sm">
+                        <span class="text-xs font-semibold text-zinc-500 dark:text-zinc-400">${escapeHtml(groupName(group))} ${escapeHtml(stageOf(group, m))}</span><br>
+                        <strong>${escapeHtml(m.report.by)}</strong> 보고 · 승자 <strong class="text-red-600 dark:text-red-400">${escapeHtml(m.report.winner)}</strong>${m.report.games ? ` <span class="tabular-nums text-zinc-500">(${m.report.games.map(([a, c]) => `${a}:${c}`).join(', ')})</span>` : ''}
+                        <span class="ml-1 text-xs text-zinc-400">${escapeHtml((m.report.at || '').slice(11, 16))}</span>
+                    </span>
+                    <span class="flex flex-shrink-0 gap-1.5">${button('보고대로 확정', `data-confirm-report="${m.id}"`, 'primary')}${button('다르게 입력', `data-confirm="${m.id}"`)}</span>
+                </li>`).join('')}</ul>`;
+    }
+
     // ---------- 그리기 ----------
     function render() {
         const t = tournament;
+        baseTitle = `${t.name} · POWERDRIVE HANYANG`;
+        document.title = baseTitle;
         $('room-name').textContent = t.name;
         $('room-code').textContent = t.code;
         const fromLabel = { 2: '결승', 4: '준결승', 8: '8강', 16: '16강', 32: '32강' }[t.format.best_of_from];
@@ -182,7 +248,7 @@
 
         $('lobby').hidden = t.status !== 'lobby';
         $('bracket').hidden = t.status === 'lobby';
-        if (t.status === 'lobby') renderLobby(t); else renderBracket(t);
+        if (t.status === 'lobby') renderLobby(t); else { renderBracket(t); notifyNewReports(t); }
         window.lucide && lucide.createIcons();
     }
 
@@ -373,8 +439,9 @@
 
     // ---------- 버튼 처리 ----------
     root.addEventListener('click', async (e) => {
-        const el = e.target.closest('[data-group], [data-remove], #start-button, #copy-join, [data-report], [data-confirm], [data-confirm-report], [data-reset], [data-third]');
+        const el = e.target.closest('[data-group], [data-remove], #start-button, #copy-join, [data-report], [data-confirm], [data-confirm-report], [data-reset], [data-third], [data-sound]');
         if (!el) return;
+        if (el.hasAttribute('data-sound')) { soundOn = !soundOn; storage.set('league_sound', soundOn ? 'on' : 'off'); renderPendingPanel(pendingReports(tournament)); if (soundOn) beep(); return; }
         const find = (id) => Object.values(tournament.brackets).flatMap((b) => b.matches.concat(b.third ? [b.third] : [])).find((m) => m.id === id);
         if (el.dataset.third) { act('/third-place', { group: activeGroup, enabled: el.dataset.third === 'on' }, el.dataset.third === 'on' ? '3·4위전을 추가했습니다' : '3·4위전을 뺐습니다'); return; }
         if (el.dataset.group) { activeGroup = el.dataset.group; render(); }
@@ -408,9 +475,10 @@
     refresh();
     // 진행 중에는 6초, 끝난 뒤에는 20초마다. 화면이 안 보이거나 결과를 입력하는 중에는 쉰다.
     (function schedule() {
-        // 여러 폰이 같은 순간에 몰리지 않도록 조금씩 어긋나게
-        const delay = (tournament && tournament.status === 'finished' ? 20000 : 6000) + Math.random() * 1500;
-        setTimeout(() => { if (document.visibilityState === 'visible' && $('result-panel').hidden) refresh(); schedule(); }, delay);
+        // 여러 폰이 같은 순간에 몰리지 않도록 조금씩 어긋나게. 화면이 가려져 있으면 운영진만 15초마다.
+        const hidden = document.visibilityState !== 'visible';
+        const delay = (tournament && tournament.status === 'finished' ? 20000 : hidden ? 15000 : 6000) + Math.random() * 1500;
+        setTimeout(() => { if ((!hidden || canAdmin) && $('result-panel').hidden) refresh(); schedule(); }, delay);
     })();
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refresh(); });
 })();

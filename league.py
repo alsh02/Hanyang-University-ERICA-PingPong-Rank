@@ -577,14 +577,22 @@ def league_admin_login():
     return render_template("league/admin.html", code=normalize_code(request.args.get("code", "")))
 
 
+def _room_name(code):
+    # 탭 제목용 대회 이름 (못 읽으면 화면 스크립트가 불러온 뒤 채운다)
+    try:
+        return load_state(code)["name"]
+    except Exception:
+        return None
+
+
 @league_bp.route("/league/<code>")
 def league_room(code):
-    return render_template("league/room.html", code=normalize_code(code), is_admin=False)
+    return render_template("league/room.html", code=normalize_code(code), is_admin=False, room_name=_room_name(code))
 
 
 @league_bp.route("/league/<code>/admin")
 def league_admin(code):
-    return render_template("league/room.html", code=normalize_code(code), is_admin=True)
+    return render_template("league/room.html", code=normalize_code(code), is_admin=True, room_name=_room_name(code))
 
 
 @league_bp.route("/api/league", methods=["POST"])
