@@ -39,6 +39,12 @@
             </div>
             {% endif %}
 
+            <!-- 리그전 대진표에서 열었을 때: 선수·방식이 정해져 있고 결과는 대진표로 보낸다 -->
+            <div id="league-banner" hidden class="mb-5 flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+                <span id="league-banner-text"></span>
+                <a id="league-banner-link" href="#" class="flex-shrink-0 text-xs font-semibold underline">대진표</a>
+            </div>
+
             <!-- 선수 선택 -->
             <div class="grid grid-cols-[1fr_auto_1fr] items-end gap-2">
                 {% for side in [0, 1] %}
@@ -486,6 +492,48 @@
 
     const pickers = [0, 1].map(createPicker);
 
+    // ---------- 리그전 모드: ?league=코드&match=경기ID ----------
+    const LEAGUE = (() => {
+        const params = new URLSearchParams(location.search);
+        if (!params.get('league') || !params.get('match')) return null;
+        const code = params.get('league').toUpperCase();
+        const read = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+        let token = null;
+        try { token = (JSON.parse(read(`league_token_${code}`) || 'null') || {}).token || null; } catch (e) {}
+        const adminKey = read(`league_admin_${code}`);
+        return { code, match: params.get('match'), adminKey, token, backUrl: adminKey ? `/league/${code}/admin` : `/league/${code}` };
+    })();
+
+    async function loadLeagueMatch() {
+        const response = await fetch(`/api/league/${LEAGUE.code}`);
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || '토너먼트를 불러오지 못했습니다.');
+        const t = data.tournament;
+        const groupKey = LEAGUE.match.split('-')[0];
+        const bracket = t.brackets[groupKey];
+        const match = bracket && bracket.matches.find((m) => m.id === LEAGUE.match);
+        if (!match || !match.players.every(Boolean)) throw new Error('이 경기는 아직 두 선수가 정해지지 않았습니다.');
+        const division = (name) => (t.participants.find((p) => p.name === name) || {}).division || '미지정';
+        state.players = match.players.map((name) => ({ name, division: division(name) }));
+        state.target = t.format.target;
+        state.bestOf = t.format.best_of;
+        pickers.forEach((picker) => picker.sync());
+        // 경기 방식과 선수는 대진표가 정한 대로 고정한다
+        setup.querySelectorAll('[data-option="target"], [data-option="bestOf"]').forEach((el) => {
+            el.setAttribute('aria-current', String(Number(el.dataset.value) === (el.dataset.option === 'target' ? state.target : state.bestOf)));
+            el.disabled = true;
+            el.classList.add('disabled:opacity-60');
+        });
+        setup.querySelectorAll('[data-player], [data-clear], #swap-players').forEach((el) => { el.disabled = true; });
+        const group = (t.groups.find((g) => g.key === groupKey) || {}).name || groupKey;
+        $('league-banner-text').textContent = `리그전 ${t.name} · ${group} ${bracket.labels[match.round]} · 끝나면 결과가 대진표로 보내집니다`;
+        $('league-banner-link').href = LEAGUE.backUrl;
+        $('league-banner').hidden = false;
+        if (match.status !== 'pending') showToast('이미 결과가 확정된 경기입니다');
+        syncSetup();
+    }
+    if (LEAGUE) loadLeagueMatch().catch((e) => showToast(e.message));
+
     $('swap-players').addEventListener('click', () => {
         state.players.reverse();
         pickers.forEach((picker) => picker.sync());
@@ -533,22 +581,28 @@
             $('result-message').textContent = '저장 중...';
             $('result-message').className = 'mt-3 text-xs font-semibold text-zinc-500 dark:text-zinc-400';
             try {
-                const response = await fetch('{{ url_for("save_match") }}', {
+                const request = LEAGUE ? {
+                    url: `/api/league/${LEAGUE.code}/matches/${LEAGUE.match}/report`,
+                    body: { winner: state.players[gameWins(0) > gameWins(1) ? 0 : 1].name, games: state.games,
+                            admin_key: LEAGUE.adminKey || undefined, token: LEAGUE.token || undefined },
+                } : {
+                    url: '{{ url_for("save_match") }}',
+                    body: { 선수A: state.players[0].name, 선수B: state.players[1].name, 형식: state.target, 판수: state.bestOf, 게임: state.games },
+                };
+                const response = await fetch(request.url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        선수A: state.players[0].name,
-                        선수B: state.players[1].name,
-                        형식: state.target,
-                        판수: state.bestOf,
-                        게임: state.games,
-                    }),
+                    body: JSON.stringify(request.body),
                 });
                 const data = await response.json();
                 if (!response.ok) throw new Error(data.error || '저장에 실패했습니다.');
-                headToHead = data.head_to_head;
-                renderHeadToHead();
-                $('result-message').textContent = '전적에 저장했습니다.';
+                if (LEAGUE) {
+                    $('result-message').innerHTML = `${data.confirmed ? '리그전 대진표에 반영했습니다.' : '결과를 보냈습니다. 운영진이 확인하면 대진표에 반영됩니다.'} <a href="${LEAGUE.backUrl}" class="underline">대진표로 돌아가기</a>`;
+                } else {
+                    headToHead = data.head_to_head;
+                    renderHeadToHead();
+                    $('result-message').textContent = '전적에 저장했습니다.';
+                }
                 $('result-message').className = 'mt-3 text-xs font-semibold text-red-600 dark:text-red-400';
             } catch (error) {
                 button.disabled = false;

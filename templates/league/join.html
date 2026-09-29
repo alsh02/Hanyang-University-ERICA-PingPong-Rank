@@ -1,0 +1,105 @@
+{% extends 'base.html' %}
+
+{% block title %}토너먼트 참가 · POWERDRIVE HANYANG{% endblock %}
+
+{% block content %}
+<div class="mb-6 flex flex-col items-center text-center sm:mb-8">
+    <span class="mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-red-50 text-red-600 ring-1 ring-inset ring-red-100 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-500/20">
+        <i data-lucide="log-in" class="h-5 w-5"></i>
+    </span>
+    <h1 class="text-2xl font-extrabold tracking-tight sm:text-3xl">
+        토너먼트 <span class="text-red-600 dark:text-red-400">참가</span>
+    </h1>
+    <p class="mt-2 max-w-md break-keep text-sm leading-relaxed text-zinc-500 [text-wrap:balance] dark:text-zinc-400">운영진이 알려준 참가 코드를 넣고 명단에서 내 이름을 고르세요.</p>
+    <span class="mt-3 h-1 w-10 rounded-full bg-red-600 dark:bg-rubber"></span>
+</div>
+
+{% if is_dummy %}
+<div class="mx-auto mb-5 max-w-xl rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+    구글 시트에 연결되어 있지 않아 <strong>데모 명단</strong>이 표시되며, 참가는 되지 않습니다.
+</div>
+{% endif %}
+
+{% set input_class = 'h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-900 placeholder-zinc-400 focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/30 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder-zinc-500' %}
+<form id="join-form" class="mx-auto max-w-xl space-y-5" autocomplete="off">
+    <div>
+        <label for="code" class="mb-1.5 block text-xs font-semibold text-zinc-500 dark:text-zinc-400">참가 코드</label>
+        <input id="code" name="code" type="text" value="{{ code }}" maxlength="6" placeholder="6자리 코드" autocapitalize="characters" spellcheck="false"
+               class="{{ input_class }} text-center font-mono text-lg uppercase tracking-[0.3em]">
+    </div>
+    <div class="relative">
+        <label for="name-input" class="mb-1.5 block text-xs font-semibold text-zinc-500 dark:text-zinc-400">내 이름</label>
+        <input id="name-input" type="text" role="combobox" aria-expanded="false" aria-controls="name-list" aria-autocomplete="list"
+               autocapitalize="off" spellcheck="false" placeholder="이름 또는 초성" class="{{ input_class }}">
+        <ul id="name-list" role="listbox" hidden aria-label="참가자 후보"
+            class="absolute left-0 right-0 top-full z-30 mt-1 max-h-60 overflow-y-auto overscroll-contain rounded-xl border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"></ul>
+        <p id="name-picked" hidden class="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400"></p>
+    </div>
+    <button type="submit" id="join-button" disabled class="h-12 w-full rounded-xl bg-red-600 text-base font-bold text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:bg-rubber dark:hover:bg-red-500 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500">
+        참가하기
+    </button>
+    <p id="join-error" hidden class="text-center text-sm font-semibold text-amber-600 dark:text-amber-400"></p>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='hangul-search.js') }}"></script>
+<script>
+(() => {
+    const MEMBERS = {{ members | tojson }};
+    const { matchName } = window.HangulSearch;
+    const escapeHtml = (text) => text.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+    const codeInput = document.getElementById('code'), input = document.getElementById('name-input'), list = document.getElementById('name-list');
+    const button = document.getElementById('join-button'), error = document.getElementById('join-error'), picked = document.getElementById('name-picked');
+    let chosen = null, options = [];
+
+    codeInput.addEventListener('input', () => { codeInput.value = codeInput.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); sync(); });
+
+    function open(query) {
+        options = MEMBERS.filter((m) => !query || matchName(m.이름, query));
+        list.innerHTML = options.length
+            ? options.map((m, i) => `<li role="option" data-index="${i}" class="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"><span class="font-semibold">${escapeHtml(m.이름)}</span><span class="text-xs font-medium text-zinc-400 dark:text-zinc-500">${escapeHtml(m.부수 || '미지정')}</span></li>`).join('')
+            : '<li class="px-3 py-2 text-sm text-zinc-400 dark:text-zinc-500">일치하는 부원이 없습니다</li>';
+        list.hidden = false;
+        input.setAttribute('aria-expanded', 'true');
+    }
+    function close() { list.hidden = true; input.setAttribute('aria-expanded', 'false'); }
+    function sync() {
+        button.disabled = !(chosen && codeInput.value.length === 6);
+        picked.hidden = !chosen;
+        if (chosen) picked.textContent = `${chosen.이름} · ${chosen.부수 || '부수 미지정'}으로 참가합니다`;
+    }
+    input.addEventListener('focus', () => { input.select(); open(''); });
+    input.addEventListener('input', () => { if (chosen && input.value !== chosen.이름) { chosen = null; sync(); } open(input.value.trim()); });
+    input.addEventListener('blur', () => { input.value = chosen ? chosen.이름 : ''; close(); });
+    input.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); if (options.length === 1) choose(0); } });
+    list.addEventListener('mousedown', (event) => event.preventDefault());
+    list.addEventListener('click', (event) => { const item = event.target.closest('[data-index]'); if (item) choose(Number(item.dataset.index)); });
+    function choose(i) { chosen = options[i]; input.value = chosen.이름; close(); input.blur(); sync(); }
+
+    document.getElementById('join-form').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (!chosen) return;
+        button.disabled = true;
+        error.hidden = true;
+        const code = codeInput.value;
+        try {
+            const response = await fetch(`/api/league/${code}/join`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: chosen.이름 }) });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || '참가하지 못했습니다.');
+            const url = `/league/${code}`;
+            try {
+                localStorage.setItem(`league_token_${code}`, JSON.stringify({ name: data.name, token: data.token }));
+                localStorage.setItem('league_last', JSON.stringify({ code, url }));
+            } catch (e) {}
+            location.href = url;
+        } catch (e) {
+            error.textContent = e.message;
+            error.hidden = false;
+            sync();
+        }
+    });
+    sync();
+})();
+</script>
+{% endblock %}

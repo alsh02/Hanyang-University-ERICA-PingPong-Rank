@@ -402,6 +402,14 @@ def append_match_row(row):
         worksheet.append_row(MATCH_HEADERS)
     worksheet.append_row(row)
 
+def record_match(row):
+    # 경기기록 시트에 추가하고, 방금 저장한 경기를 캐시에도 반영해 전적·최근 경기가 바로 갱신되게 한다
+    append_match_row(row)
+    with _sheet_lock:
+        records = list(_match_cache["records"] or [])
+        records.append(dict(zip(MATCH_HEADERS, row)))
+        _match_cache["records"] = records
+
 @app.after_request
 def compress_html(response):
     # 검색 페이지는 전체 부원 카드를 담고 있어 HTML이 크므로 gzip으로 압축 (약 1/10 크기)
@@ -586,22 +594,34 @@ def save_match():
         return jsonify({"error": error}), 400
 
     try:
-        append_match_row(row)
+        record_match(row)
     except Exception as e:
         app.logger.error("경기 기록 저장 오류 발생: %s", e)
         return jsonify({"error": "기록 저장에 실패했습니다. 잠시 후 다시 시도해 주세요."}), 502
 
     _match_writes.append(now)
-    with _sheet_lock:
-        # 방금 저장한 경기를 캐시에도 반영해 전적이 바로 갱신되게 한다
-        records = list(_match_cache["records"] or [])
-        records.append(dict(zip(MATCH_HEADERS, row)))
-        _match_cache["records"] = records
     return jsonify({"head_to_head": build_head_to_head(get_match_records())})
 
 @app.route("/proposal", methods=["GET"])
 def proposal():
     return render_template("proposal.html")
+
+# ---------- 리그전(토너먼트) ----------
+import league  # noqa: E402  (app의 시트 접근 함수를 넘겨 주므로 여기서 불러온다)
+
+league.configure(
+    open_records_spreadsheet=open_records_spreadsheet,
+    get_sheet_data=get_sheet_data,
+    record_match=record_match,
+    division_number=division_number,
+    normalize_name=normalize_name,
+    member_sort_key=member_sort_key,
+    point_targets=POINT_TARGETS,
+    best_of_options=BEST_OF_OPTIONS,
+    kst=KST,
+    logger=app.logger,
+)
+app.register_blueprint(league.league_bp)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001, debug=True)

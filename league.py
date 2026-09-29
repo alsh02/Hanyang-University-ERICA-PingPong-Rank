@@ -1,0 +1,634 @@
+"""리그전(토너먼트) 운영.
+
+운영진이 방을 개설하면 참가 코드가 생기고, 부원들은 코드로 들어와 명단에서 자기 이름을 고른다.
+운영진이 시작하면 참가자를 부수 기준으로 상위부·중위부·하위부로 나눠 그룹마다 단판 토너먼트 대진표를 만든다.
+경기가 끝나면 선수(또는 점수판)가 결과를 보고하고, 운영진이 확정하면 승자가 다음 대진으로 올라간다.
+모든 그룹의 우승자가 정해지면 리그전이 끝난다.
+
+상태는 경기 기록 파일의 두 시트에 둔다.
+- '토너먼트': 방마다 한 줄. 운영진만 고치는 상태(JSON) — 대진표, 확정 결과, 그룹 조정.
+- '토너먼트로그': 참가·결과 보고를 한 줄씩 덧붙이기만 한다(append-only). 여러 명이 동시에 눌러도 서로 덮어쓰지 않는다.
+운영진의 상태 변경은 항상 최신 행을 다시 읽은 뒤 한 번에 쓰므로, 쓰는 사람이 운영진 하나뿐이라 충돌이 없다.
+"""
+import json
+import random
+import re
+import secrets
+import threading
+import time
+from collections import deque
+from datetime import datetime
+
+from flask import Blueprint, jsonify, redirect, render_template, request, url_for
+
+league_bp = Blueprint("league", __name__)
+
+TOURNAMENT_SHEET = "토너먼트"
+LOG_SHEET = "토너먼트로그"
+TOURNAMENT_HEADERS = ["코드", "상태", "생성일시", "갱신일시", "상태JSON"]
+LOG_HEADERS = ["코드", "종류", "시각", "내용JSON"]
+
+CACHE_TTL = 3            # 참가자 화면이 몇 초마다 새로 고쳐도 시트 호출은 이 간격으로만 나간다
+WRITE_LIMIT = 240        # 10분당 쓰기 허용 횟수 (공개 주소이므로 최소한의 남용 방지)
+CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # 헷갈리는 0/O, 1/I/L 제외
+STATUS_LABELS = {"lobby": "참가 접수 중", "running": "진행 중", "finished": "종료"}
+
+# 기본 그룹 기준: 부수표의 상위부(1~4부) · 중위부(5~7부) · 하위부(8부~). 0부 이하도 상위부.
+DEFAULT_GROUPS = [
+    {"key": "upper", "name": "상위부", "min": -99, "max": 4},
+    {"key": "middle", "name": "중위부", "min": 5, "max": 7},
+    {"key": "lower", "name": "하위부", "min": 8, "max": 99},
+]
+
+# app.py가 시작할 때 채워 주는 의존성 (순환 import를 피하기 위해 함수로 받는다)
+_deps = {}
+
+
+def configure(**deps):
+    _deps.update(deps)
+
+
+def kst_now():
+    return datetime.now(_deps["kst"]).strftime("%Y-%m-%d %H:%M:%S")
+
+
+# ---------------------------------------------------------------------------
+# 저장소: 구글 시트 두 장
+# ---------------------------------------------------------------------------
+_lock = threading.Lock()
+_cache = {"rows": None, "logs": None, "expires_at": 0.0}
+_writes = deque()
+
+
+class LeagueError(Exception):
+    def __init__(self, message, status=400):
+        super().__init__(message)
+        self.status = status
+
+
+def _worksheet(title, headers):
+    import gspread
+
+    spreadsheet = _deps["open_records_spreadsheet"]()
+    try:
+        return spreadsheet.worksheet(title)
+    except gspread.WorksheetNotFound:
+        worksheet = spreadsheet.add_worksheet(title=title, rows=1000, cols=len(headers))
+        worksheet.append_row(headers)
+        return worksheet
+
+
+def _read_all(force=False):
+    # 두 시트를 통째로 읽어 잠깐 캐시한다. 참가자 수십 명이 4초마다 새로 고쳐도 시트 호출은 몇 초에 한 번이다.
+    with _lock:
+        now = time.monotonic()
+        if force or now >= _cache["expires_at"] or _cache["rows"] is None:
+            _cache["rows"] = _worksheet(TOURNAMENT_SHEET, TOURNAMENT_HEADERS).get_all_values()
+            _cache["logs"] = _worksheet(LOG_SHEET, LOG_HEADERS).get_all_values()
+            _cache["expires_at"] = now + CACHE_TTL
+        return _cache["rows"], _cache["logs"]
+
+
+def _invalidate():
+    with _lock:
+        _cache["expires_at"] = 0.0
+
+
+def _check_write_limit():
+    now = time.monotonic()
+    while _writes and now - _writes[0] > 600:
+        _writes.popleft()
+    if len(_writes) >= WRITE_LIMIT:
+        raise LeagueError("요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.", 429)
+    _writes.append(now)
+
+
+def _find_row(rows, code):
+    for i, row in enumerate(rows):
+        if i == 0 or not row:
+            continue
+        if row[0].strip().upper() == code:
+            return i + 1, row  # 시트 행 번호는 1부터
+    return None, None
+
+
+def load_state(code, force=False):
+    # 방 상태(JSON) + 로그(참가·보고)를 합쳐 하나의 상태로 돌려준다
+    code = normalize_code(code)
+    rows, logs = _read_all(force)
+    _, row = _find_row(rows, code)
+    if row is None or len(row) < 5 or not row[4]:
+        raise LeagueError("그 코드의 토너먼트가 없습니다.", 404)
+    state = json.loads(row[4])
+    return assemble(state, [l for l in logs[1:] if l and l[0].strip().upper() == code])
+
+
+def save_state(state):
+    # 운영진의 변경을 방 행에 통째로 다시 쓴다
+    state["updated_at"] = kst_now()
+    worksheet = _worksheet(TOURNAMENT_SHEET, TOURNAMENT_HEADERS)
+    rows = worksheet.get_all_values()
+    row_no, _ = _find_row(rows, state["code"])
+    values = [state["code"], state["status"], state["created_at"], state["updated_at"], json.dumps(persistable(state), ensure_ascii=False)]
+    if row_no is None:
+        worksheet.append_row(values)
+    else:
+        worksheet.update(values=[values], range_name=f"A{row_no}:E{row_no}")
+    _invalidate()
+
+
+def append_log(code, kind, payload):
+    _worksheet(LOG_SHEET, LOG_HEADERS).append_row([code, kind, kst_now(), json.dumps(payload, ensure_ascii=False)])
+    _invalidate()
+
+
+def delete_tournament(code):
+    worksheet = _worksheet(TOURNAMENT_SHEET, TOURNAMENT_HEADERS)
+    row_no, _ = _find_row(worksheet.get_all_values(), code)
+    if row_no:
+        worksheet.delete_rows(row_no)
+    _invalidate()
+
+
+# ---------------------------------------------------------------------------
+# 상태 조립
+# ---------------------------------------------------------------------------
+PERSIST_KEYS = ("code", "name", "status", "created_at", "updated_at", "started_at", "finished_at", "admin_key",
+                "format", "groups", "seed", "group_overrides", "removed", "brackets")
+
+
+def persistable(state):
+    return {k: state[k] for k in PERSIST_KEYS if k in state}
+
+
+def normalize_code(code):
+    return re.sub(r"[^A-Z0-9]", "", (code or "").upper())
+
+
+def new_code(existing):
+    while True:
+        code = "".join(secrets.choice(CODE_ALPHABET) for _ in range(6))
+        if code not in existing:
+            return code
+
+
+def group_for(division, groups):
+    # 부수 숫자를 그룹 기준에 맞춰 배정한다. 부수가 없으면 배정 보류(운영진이 정한다) — 임시로 마지막 그룹.
+    number = _deps["division_number"](division or "")
+    if number is None:
+        return groups[-1]["key"], False
+    for g in groups:
+        if g["min"] <= number <= g["max"]:
+            return g["key"], True
+    return groups[-1]["key"], False
+
+
+def assemble(state, logs):
+    # 참가 로그 → 참가자 목록 (같은 이름은 처음 한 번만), 보고 로그 → 매치별 최신 보고
+    participants, tokens, reports = [], {}, {}
+    for _, kind, at, payload in (l[:4] for l in logs if len(l) >= 4):
+        try:
+            data = json.loads(payload)
+        except ValueError:
+            continue
+        if kind == "참가":
+            name = data.get("name", "")
+            if name and name not in tokens and name not in state.get("removed", []):
+                tokens[name] = data.get("token", "")
+                participants.append({"name": name, "division": data.get("division", ""), "joined_at": at})
+        elif kind == "보고":
+            reports[data.get("match")] = {**data, "at": at}
+
+    for p in participants:
+        auto_group, decided = group_for(p["division"], state["groups"])
+        override = state.get("group_overrides", {}).get(p["name"])
+        p["group"] = override or auto_group
+        p["group_undecided"] = not decided and not override
+
+    for bracket in state.get("brackets", {}).values():
+        for match in bracket["matches"]:
+            report = reports.get(match["id"])
+            match["report"] = None if match["status"] == "confirmed" or not report else {
+                k: report.get(k) for k in ("winner", "games", "by", "at")}
+
+    state["participants"] = participants
+    state["_tokens"] = tokens
+    return state
+
+
+def public_view(state):
+    # 참가자 화면에 보내는 상태: 운영 키와 참가 토큰은 뺀다
+    view = {k: v for k, v in state.items() if k not in ("admin_key", "_tokens")}
+    view["status_label"] = STATUS_LABELS.get(state["status"], state["status"])
+    return view
+
+
+# ---------------------------------------------------------------------------
+# 대진표
+# ---------------------------------------------------------------------------
+def seed_order(size):
+    # 표준 토너먼트 배치: 1번 시드와 마지막 시드가 만나고, 상위 시드끼리는 결승 전까지 만나지 않는다
+    order = [1]
+    while len(order) < size:
+        n = len(order) * 2
+        order = [x for s in order for x in (s, n + 1 - s)]
+    return order
+
+
+def round_label(size, round_no, rounds):
+    if round_no == rounds:
+        return "결승"
+    if round_no == rounds - 1:
+        return "준결승"
+    return f"{size >> (round_no - 1)}강"
+
+
+def build_bracket(group_key, names, seed_mode, divisions):
+    # names: 그룹 참가자 이름 (seed_mode가 'division'이면 부수 순, 아니면 무작위)
+    names = list(names)
+    if seed_mode == "division":
+        names.sort(key=lambda n: (_deps["division_number"](divisions.get(n, "")) is None,
+                                  _deps["division_number"](divisions.get(n, "")) or 0, n))
+    else:
+        random.shuffle(names)
+
+    if len(names) == 1:
+        return {"size": 1, "rounds": 0, "matches": [], "champion": names[0], "labels": {}}
+
+    size = 1
+    while size < len(names):
+        size *= 2
+    rounds = size.bit_length() - 1
+    slots = [names[seed - 1] if seed <= len(names) else None for seed in seed_order(size)]
+
+    matches = []
+    for r in range(1, rounds + 1):
+        for i in range(size >> r):
+            matches.append({
+                "id": f"{group_key}-{r}-{i}", "round": r, "index": i,
+                "players": [slots[2 * i], slots[2 * i + 1]] if r == 1 else [None, None],
+                "winner": None, "games": None, "status": "waiting",
+                "next": f"{group_key}-{r + 1}-{i // 2}" if r < rounds else None, "slot": i % 2,
+            })
+    bracket = {"size": size, "rounds": rounds, "matches": matches, "champion": None,
+               "labels": {str(r): round_label(size, r, rounds) for r in range(1, rounds + 1)}}
+
+    # 1라운드: 둘 다 있으면 경기 대기, 한쪽만 있으면 부전승
+    by_id = {m["id"]: m for m in matches}
+    for m in [m for m in matches if m["round"] == 1]:
+        present = [p for p in m["players"] if p]
+        if len(present) == 2:
+            m["status"] = "pending"
+        elif len(present) == 1:
+            _advance(bracket, by_id, m, present[0], status="bye")
+    return bracket
+
+
+def _advance(bracket, by_id, match, winner, status="confirmed"):
+    match["winner"] = winner
+    match["status"] = status
+    if match["next"]:
+        nxt = by_id[match["next"]]
+        nxt["players"][match["slot"]] = winner
+        if all(nxt["players"]):
+            nxt["status"] = "pending"
+    else:
+        bracket["champion"] = winner
+
+
+def find_match(state, match_id):
+    for bracket in state.get("brackets", {}).values():
+        for match in bracket["matches"]:
+            if match["id"] == match_id:
+                return bracket, match
+    raise LeagueError("그 경기를 찾을 수 없습니다.", 404)
+
+
+def validate_games(games, target, best_of):
+    # 점수판이 보낸 게임 점수 검증: (오류, [(a,b)...], 승자 인덱스)
+    if games in (None, "", []):
+        return None, None, None
+    try:
+        parsed = [(int(g[0]), int(g[1])) for g in games]
+    except (TypeError, ValueError, IndexError):
+        return "게임 점수 형식이 올바르지 않습니다.", None, None
+    needed = best_of // 2 + 1
+    if not 1 <= len(parsed) <= best_of:
+        return "게임 수가 올바르지 않습니다.", None, None
+    wins = [0, 0]
+    for a, b in parsed:
+        high, low = max(a, b), min(a, b)
+        if not (0 <= low < high <= 99 and high >= target and high - low >= 2):
+            return f"완료되지 않은 게임 점수가 있습니다. ({a}:{b})", None, None
+        wins[0 if a > b else 1] += 1
+    if max(wins) != needed or min(wins) >= needed:
+        return "승부가 확정되지 않은 점수입니다.", None, None
+    return None, parsed, 0 if wins[0] > wins[1] else 1
+
+
+def confirm_match(state, match_id, winner, games=None):
+    bracket, match = find_match(state, match_id)
+    if match["status"] == "confirmed":
+        raise LeagueError("이미 확정된 경기입니다. 되돌린 뒤 다시 확정하세요.")
+    if not all(match["players"]):
+        raise LeagueError("두 선수가 모두 정해진 뒤에 확정할 수 있습니다.")
+    if winner not in match["players"]:
+        raise LeagueError("승자는 이 경기의 두 선수 중 하나여야 합니다.")
+    error, parsed, winner_index = validate_games(games, state["format"]["target"], state["format"]["best_of"])
+    if error:
+        raise LeagueError(error)
+    if parsed is not None and match["players"][winner_index] != winner:
+        raise LeagueError("게임 점수와 승자가 맞지 않습니다.")
+
+    by_id = {m["id"]: m for m in bracket["matches"]}
+    match["games"] = parsed
+    match["report"] = None
+    _advance(bracket, by_id, match, winner)
+    if all(b["champion"] for b in state["brackets"].values()):
+        state["status"] = "finished"
+        state["finished_at"] = kst_now()
+    return match, parsed
+
+
+def reset_match(state, match_id):
+    bracket, match = find_match(state, match_id)
+    if match["status"] != "confirmed":
+        raise LeagueError("확정된 경기만 되돌릴 수 있습니다.")
+    by_id = {m["id"]: m for m in bracket["matches"]}
+    if match["next"]:
+        nxt = by_id[match["next"]]
+        if nxt["status"] in ("confirmed", "bye"):
+            raise LeagueError("다음 경기가 이미 끝나 되돌릴 수 없습니다. 다음 경기부터 되돌리세요.")
+        nxt["players"][match["slot"]] = None
+        nxt["status"] = "waiting"
+    else:
+        bracket["champion"] = None
+    match.update({"winner": None, "games": None, "status": "pending"})
+    if state["status"] == "finished":
+        state["status"] = "running"
+        state.pop("finished_at", None)
+    return match
+
+
+def start_tournament(state):
+    if state["status"] != "lobby":
+        raise LeagueError("이미 시작한 토너먼트입니다.")
+    if len(state["participants"]) < 2:
+        raise LeagueError("참가자가 2명 이상이어야 시작할 수 있습니다.")
+    divisions = {p["name"]: p["division"] for p in state["participants"]}
+    state["brackets"] = {}
+    for g in state["groups"]:
+        names = [p["name"] for p in state["participants"] if p["group"] == g["key"]]
+        if names:
+            state["brackets"][g["key"]] = build_bracket(g["key"], names, state["seed"], divisions)
+    state["status"] = "running"
+    state["started_at"] = kst_now()
+    if all(b["champion"] for b in state["brackets"].values()):
+        state["status"] = "finished"
+        state["finished_at"] = kst_now()
+
+
+# ---------------------------------------------------------------------------
+# 라우트
+# ---------------------------------------------------------------------------
+def _members():
+    members, is_dummy = _deps["get_sheet_data"]()
+    return {m["이름"]: m for m in members}, is_dummy
+
+
+def _require_admin(state):
+    key = request.headers.get("X-League-Key") or (request.get_json(silent=True) or {}).get("admin_key") or ""
+    if not key or not secrets.compare_digest(key, state.get("admin_key", "")):
+        raise LeagueError("운영진만 할 수 있는 작업입니다.", 403)
+
+
+def _ok(state, **extra):
+    return jsonify({"tournament": public_view(state), **extra})
+
+
+@league_bp.errorhandler(LeagueError)
+def _handle_error(error):
+    return jsonify({"error": str(error)}), error.status
+
+
+@league_bp.route("/league")
+def league_home():
+    return render_template("league/home.html")
+
+
+@league_bp.route("/league/new")
+def league_new():
+    return render_template("league/new.html", default_groups=DEFAULT_GROUPS,
+                           point_targets=_deps["point_targets"], best_of_options=_deps["best_of_options"])
+
+
+@league_bp.route("/league/join")
+def league_join():
+    members, is_dummy = _members()
+    return render_template("league/join.html", members=sorted(members.values(), key=_deps["member_sort_key"]),
+                           code=normalize_code(request.args.get("code", "")), is_dummy=is_dummy)
+
+
+@league_bp.route("/league/<code>")
+def league_room(code):
+    return render_template("league/room.html", code=normalize_code(code), is_admin=False)
+
+
+@league_bp.route("/league/<code>/admin")
+def league_admin(code):
+    return render_template("league/room.html", code=normalize_code(code), is_admin=True)
+
+
+@league_bp.route("/api/league", methods=["POST"])
+def api_create():
+    _, is_dummy = _members()
+    if is_dummy:
+        raise LeagueError("구글 시트에 연결되어 있지 않아 토너먼트를 만들 수 없습니다.", 503)
+    _check_write_limit()
+    data = request.get_json(silent=True) or {}
+    name = str(data.get("name", "")).strip()[:40] or f"탁우회 리그전 {kst_now()[:10]}"
+    try:
+        target = int(data.get("target", 11))
+        best_of = int(data.get("best_of", 3))
+    except (TypeError, ValueError):
+        raise LeagueError("경기 방식이 올바르지 않습니다.")
+    if target not in _deps["point_targets"] or best_of not in _deps["best_of_options"]:
+        raise LeagueError("지원하지 않는 경기 방식입니다.")
+    seed = data.get("seed", "random")
+    if seed not in ("random", "division"):
+        raise LeagueError("시드 방식이 올바르지 않습니다.")
+    groups = _parse_groups(data.get("groups"))
+
+    rows, _ = _read_all(force=True)
+    code = new_code({r[0].strip().upper() for r in rows[1:] if r})
+    state = {
+        "code": code, "name": name, "status": "lobby", "created_at": kst_now(), "updated_at": kst_now(),
+        "admin_key": secrets.token_urlsafe(18), "format": {"target": target, "best_of": best_of},
+        "groups": groups, "seed": seed, "group_overrides": {}, "removed": [], "brackets": {},
+    }
+    save_state(state)
+    return jsonify({"code": code, "admin_key": state["admin_key"],
+                    "admin_url": url_for("league.league_admin", code=code, key=state["admin_key"]),
+                    "join_url": url_for("league.league_room", code=code)})
+
+
+def _parse_groups(raw):
+    # 그룹 경계: [{"name": "상위부", "max": 4}, {"name": "중위부", "max": 7}, {"name": "하위부"}] 처럼 상한만 받는다
+    if not raw:
+        return [dict(g) for g in DEFAULT_GROUPS]
+    groups, low = [], -99
+    try:
+        for i, g in enumerate(raw[:5]):
+            name = str(g.get("name", "")).strip()[:10] or DEFAULT_GROUPS[min(i, 2)]["name"]
+            is_last = i == len(raw) - 1
+            high = 99 if is_last else int(g["max"])
+            if high < low:
+                raise ValueError
+            groups.append({"key": f"g{i + 1}", "name": name, "min": low, "max": high})
+            low = high + 1
+    except (TypeError, ValueError, KeyError):
+        raise LeagueError("그룹 기준이 올바르지 않습니다.")
+    if len(groups) < 1:
+        raise LeagueError("그룹이 하나 이상 필요합니다.")
+    return groups
+
+
+@league_bp.route("/api/league/<code>")
+def api_state(code):
+    state = load_state(code)
+    return _ok(state)
+
+
+@league_bp.route("/api/league/<code>/join", methods=["POST"])
+def api_join(code):
+    state = load_state(code)
+    if state["status"] != "lobby":
+        raise LeagueError("참가 접수가 끝난 토너먼트입니다.")
+    _check_write_limit()
+    members, _ = _members()
+    name = _deps["normalize_name"]((request.get_json(silent=True) or {}).get("name", ""))
+    if name not in members:
+        raise LeagueError("명단에 없는 이름입니다. 부수표에 등록된 이름을 골라 주세요.")
+    if name in state["removed"]:
+        raise LeagueError("운영진이 참가 목록에서 제외한 이름입니다. 운영진에게 문의하세요.")
+    if name in state["_tokens"]:
+        raise LeagueError("이미 참가한 이름입니다. 본인이 맞다면 처음 참가한 기기에서 열어 주세요.", 409)
+    token = secrets.token_urlsafe(12)
+    append_log(state["code"], "참가", {"name": name, "division": members[name]["부수"], "token": token})
+    return jsonify({"token": token, "name": name, "tournament": public_view(load_state(code, force=True))})
+
+
+@league_bp.route("/api/league/<code>/participants", methods=["POST"])
+def api_participants(code):
+    # 운영진: 시작 전 그룹 조정 또는 참가자 제외
+    state = load_state(code, force=True)
+    _require_admin(state)
+    if state["status"] != "lobby":
+        raise LeagueError("시작한 뒤에는 참가자를 바꿀 수 없습니다.")
+    data = request.get_json(silent=True) or {}
+    name = str(data.get("name", "")).strip()
+    if name not in {p["name"] for p in state["participants"]}:
+        raise LeagueError("참가자 목록에 없는 이름입니다.")
+    if data.get("remove"):
+        state["removed"].append(name)
+        state["group_overrides"].pop(name, None)
+    else:
+        group = data.get("group")
+        if group not in {g["key"] for g in state["groups"]}:
+            raise LeagueError("그룹이 올바르지 않습니다.")
+        state["group_overrides"][name] = group
+    save_state(state)
+    return _ok(load_state(code, force=True))
+
+
+@league_bp.route("/api/league/<code>/start", methods=["POST"])
+def api_start(code):
+    state = load_state(code, force=True)
+    _require_admin(state)
+    start_tournament(state)
+    save_state(state)
+    return _ok(load_state(code, force=True))
+
+
+@league_bp.route("/api/league/<code>/matches/<match_id>/report", methods=["POST"])
+def api_report(code, match_id):
+    # 선수(참가 토큰) 또는 점수판이 결과를 보고한다. 운영 키가 함께 오면 바로 확정한다.
+    state = load_state(code, force=True)
+    if state["status"] != "running":
+        raise LeagueError("진행 중인 토너먼트가 아닙니다.")
+    data = request.get_json(silent=True) or {}
+    _, match = find_match(state, match_id)
+    if match["status"] != "pending":
+        raise LeagueError("지금 결과를 받을 수 있는 경기가 아닙니다.")
+    winner = str(data.get("winner", "")).strip()
+    if winner not in match["players"]:
+        raise LeagueError("승자는 이 경기의 두 선수 중 하나여야 합니다.")
+    error, _, winner_index = validate_games(data.get("games"), state["format"]["target"], state["format"]["best_of"])
+    if error:
+        raise LeagueError(error)
+    if winner_index is not None and match["players"][winner_index] != winner:
+        raise LeagueError("게임 점수와 승자가 맞지 않습니다.")
+
+    admin_key = request.headers.get("X-League-Key") or data.get("admin_key") or ""
+    _check_write_limit()
+    if admin_key and secrets.compare_digest(admin_key, state["admin_key"]):
+        return _confirm_and_save(state, match_id, winner, data.get("games"), by="운영진")
+
+    token = str(data.get("token", ""))
+    reporter = next((n for n, t in state["_tokens"].items() if t and secrets.compare_digest(t, token)), None)
+    if reporter not in match["players"]:
+        raise LeagueError("이 경기의 선수만 결과를 보낼 수 있습니다.", 403)
+    append_log(state["code"], "보고", {"match": match_id, "winner": winner, "games": data.get("games") or None, "by": reporter})
+    return _ok(load_state(code, force=True), reported=True)
+
+
+@league_bp.route("/api/league/<code>/matches/<match_id>/confirm", methods=["POST"])
+def api_confirm(code, match_id):
+    state = load_state(code, force=True)
+    _require_admin(state)
+    if state["status"] != "running":
+        raise LeagueError("진행 중인 토너먼트가 아닙니다.")
+    data = request.get_json(silent=True) or {}
+    _, match = find_match(state, match_id)
+    # 승자를 따로 주지 않으면 선수가 보고한 결과대로 확정한다
+    winner = str(data.get("winner") or (match.get("report") or {}).get("winner") or "").strip()
+    games = data.get("games") if "games" in data else (match.get("report") or {}).get("games")
+    _check_write_limit()
+    return _confirm_and_save(state, match_id, winner, games, by="운영진")
+
+
+def _confirm_and_save(state, match_id, winner, games, by):
+    match, parsed = confirm_match(state, match_id, winner, games)
+    save_state(state)
+    # 게임 점수까지 있으면 전적(경기기록)에도 남긴다
+    if parsed:
+        a, b = match["players"]
+        wins = [sum(1 for x, y in parsed if x > y), sum(1 for x, y in parsed if y > x)]
+        fmt = state["format"]
+        row = [kst_now()[:16], a, b, str(wins[0]), str(wins[1]), winner,
+               f"{fmt['target']}점 {fmt['best_of']}판 {fmt['best_of'] // 2 + 1}선 · 리그전 {state['name']}",
+               ", ".join(f"{x}:{y}" for x, y in parsed)]
+        try:
+            _deps["record_match"](row)
+        except Exception as e:  # 전적 기록 실패는 토너먼트 진행을 막지 않는다
+            _deps["logger"].error("리그전 결과의 전적 기록 실패: %s", e)
+    return _ok(load_state(state["code"], force=True), confirmed=True)
+
+
+@league_bp.route("/api/league/<code>/matches/<match_id>/reset", methods=["POST"])
+def api_reset(code, match_id):
+    state = load_state(code, force=True)
+    _require_admin(state)
+    _check_write_limit()
+    reset_match(state, match_id)
+    save_state(state)
+    return _ok(load_state(code, force=True))
+
+
+@league_bp.route("/api/league/<code>/delete", methods=["POST"])
+def api_delete(code):
+    state = load_state(code, force=True)
+    _require_admin(state)
+    _check_write_limit()
+    delete_tournament(state["code"])
+    return jsonify({"deleted": True})
