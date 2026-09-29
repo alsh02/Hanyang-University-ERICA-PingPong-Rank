@@ -183,7 +183,7 @@
                         ${p.group_undecided ? '<span class="flex-shrink-0 rounded border border-amber-300 px-1 text-[10px] font-semibold text-amber-700 dark:border-amber-500/40 dark:text-amber-300">배정 확인</span>' : ''}
                     </span>
                     ${canAdmin ? `<span class="flex flex-shrink-0 items-center gap-1">
-                        <select data-move="${escapeHtml(p.name)}" aria-label="${escapeHtml(p.name)} 그룹" class="h-7 rounded-md border border-zinc-200 bg-white px-1 text-xs dark:border-zinc-700 dark:bg-zinc-900">
+                        <select data-move="${escapeHtml(p.name)}" aria-label="${escapeHtml(p.name)} 그룹" class="h-7 rounded-md border border-zinc-200 bg-white pl-2 pr-7 text-xs dark:border-zinc-700 dark:bg-zinc-900">
                             ${t.groups.map((o) => `<option value="${o.key}" ${o.key === p.group ? 'selected' : ''}>${escapeHtml(o.name)}</option>`).join('')}
                         </select>
                         ${button('<i data-lucide="x" class="h-3.5 w-3.5"></i>', `data-remove="${escapeHtml(p.name)}" aria-label="${escapeHtml(p.name)} 제외"`, 'quiet')}
@@ -252,7 +252,7 @@
                 <span class="font-semibold text-zinc-500 dark:text-zinc-400">${escapeHtml(groupName(activeGroup))} 운영</span>
                 ${b && b.rounds >= 2 ? button(b.third ? '3·4위전 취소' : '3·4위전 진행', `data-third="${b.third ? 'off' : 'on'}"`, b.third ? 'ghost' : 'primary') : '<span class="text-zinc-400">3·4위전 없음(준결승 없음)</span>'}
                 <label class="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-300">5판 3선 전환
-                    <select id="best-of-from" class="h-8 rounded-lg border border-zinc-200 bg-white px-1.5 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-900">
+                    <select id="best-of-from" class="h-8 rounded-lg border border-zinc-200 bg-white pl-2.5 pr-8 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-900">
                         ${[[0, '전환 없음'], [2, '결승부터'], [4, '준결승부터'], [8, '8강부터'], [16, '16강부터']].map(([v, l]) => `<option value="${v}" ${v === from ? 'selected' : ''}>${l}</option>`).join('')}
                     </select></label>`;
         }
