@@ -16,7 +16,13 @@ app.secret_key = "pingpong_rank_secret_key_for_flash"
 # Render 프록시 뒤에서도 https 절대 URL(링크 미리보기용 og:image 등)을 만들 수 있도록 설정
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1)
 
-SHEET_NAME = "탁우회_명단"
+# 부원 명단은 동아리 부수표 파일의 표 형태 시트에서 읽는다. 학기마다 파일이 바뀌므로 환경변수로 덮어쓸 수 있다.
+# 부수표 파일은 '링크가 있는 모든 사용자' 공유라 제목 검색으로는 찾지 못하므로 파일 ID로 연다 (ID가 비어 있으면 제목으로).
+SHEET_ID = os.environ.get("SHEET_ID", "1ImTCY8mrRIrINgPZE1HacRLT4vsRYJvadm5gX1TSoSw")  # 26-2 탁우회 부수표
+SHEET_NAME = os.environ.get("SHEET_NAME", "26-2 탁우회 부수표")
+MEMBER_WORKSHEET = os.environ.get("MEMBER_WORKSHEET", "시트2")
+# 경기 기록은 부수표 파일이 아니라 서비스 계정이 편집할 수 있는 별도 파일에 쌓는다 (부수표는 학기마다 바뀌고 읽기 전용일 수 있음)
+RECORDS_SHEET_NAME = os.environ.get("RECORDS_SHEET_NAME", "탁우회_명단")
 # 구글 시트 캐시 유지 시간(초). 요청마다 API를 호출하면 느리고 분당 호출 한도도 금방 소진된다.
 SHEET_CACHE_TTL = int(os.environ.get("SHEET_CACHE_TTL", "60"))
 SHEET_RETRY_AFTER = 10  # 시트 연동 실패 후 재시도까지 대기(초)
@@ -222,15 +228,41 @@ _sheet_lock = threading.Lock()
 _sheet_client = None
 _sheet_cache = {"members": None, "expires_at": 0.0}
 
-def open_spreadsheet():
+def get_sheet_client():
     global _sheet_client
     if _sheet_client is None:
         _sheet_client = create_sheet_client()
-    return _sheet_client.open(SHEET_NAME)
+    return _sheet_client
+
+def open_spreadsheet():
+    # 부원 명단(부수표) 파일
+    client = get_sheet_client()
+    return client.open_by_key(SHEET_ID) if SHEET_ID else client.open(SHEET_NAME)
+
+def open_records_spreadsheet():
+    # 경기 기록 파일
+    return get_sheet_client().open(RECORDS_SHEET_NAME)
+
+def has_racket_data(members):
+    # 라켓 열이 통째로 비어 있으면 라켓 관련 화면(필터·칩·통계)을 숨긴다
+    return any(m["라켓"] for m in members)
+
+def open_member_worksheet():
+    import gspread
+
+    # 부수표 파일에서 표 형태의 시트를 연다. 시트 이름이 바뀌었으면 두 번째 시트를 대신 쓴다.
+    spreadsheet = open_spreadsheet()
+    try:
+        return spreadsheet.worksheet(MEMBER_WORKSHEET)
+    except gspread.WorksheetNotFound:
+        worksheet = spreadsheet.get_worksheet(1)
+        if worksheet is None:
+            raise ValueError(f"'{SHEET_NAME}' 파일에 '{MEMBER_WORKSHEET}' 시트가 없습니다.")
+        return worksheet
 
 def fetch_sheet_members():
     # get_all_records()는 '0'을 숫자 0으로 바꾸고 헤더가 중복되면 실패하므로 원본 문자열로 받는다
-    return parse_sheet_rows(open_spreadsheet().sheet1.get_all_values())
+    return parse_sheet_rows(open_member_worksheet().get_all_values())
 
 def get_sheet_data():
     # (부원 목록, 더미 데이터 여부)를 반환한다.
@@ -287,7 +319,7 @@ def fetch_match_records():
     import gspread
 
     try:
-        worksheet = open_spreadsheet().worksheet(MATCH_SHEET_NAME)
+        worksheet = open_records_spreadsheet().worksheet(MATCH_SHEET_NAME)
     except gspread.WorksheetNotFound:
         return []  # 아직 한 경기도 저장하지 않은 상태
     return parse_match_rows(worksheet.get_all_values())
@@ -361,7 +393,7 @@ def validate_match(data, member_names):
 def append_match_row(row):
     import gspread
 
-    spreadsheet = open_spreadsheet()
+    spreadsheet = open_records_spreadsheet()
     try:
         worksheet = spreadsheet.worksheet(MATCH_SHEET_NAME)
     except gspread.WorksheetNotFound:
@@ -409,6 +441,7 @@ def index():
         total_count=len(members),
         division_count=len({m["부수"] for m in members if m["부수"]}),
         racket_stats=[(racket, racket_counts[racket]) for racket in RACKET_ORDER if racket_counts[racket]],
+        has_rackets=has_racket_data(members),
         recent_matches=recent,
         is_dummy=is_dummy
     )
@@ -424,6 +457,12 @@ def search():
     members, is_dummy = get_sheet_data()
     members = sorted(members, key=member_sort_key)
 
+    # 라켓 정보가 하나도 없으면 라켓 탭을 두지 않는다
+    has_rackets = has_racket_data(members)
+    search_fields = [f for f in SEARCH_FIELDS if f != "라켓" or has_rackets]
+    if search_filter not in search_fields:
+        search_filter = "이름"
+
     # 카드는 전부 렌더링하되 검색어와 일치하는 부원만 노출한다.
     # 첫 진입 시에는 아무도 노출하지 않음 (TMI 방지). 브라우저에서는 입력 즉시 JS가 다시 필터링한다.
     matcher = MATCHERS[search_filter]
@@ -436,6 +475,8 @@ def search():
         total_count=len(members),
         divisions=sorted({m["부수"] for m in members if m["부수"]}, key=division_sort_key),
         rackets=sorted({m["라켓"] for m in members if m["라켓"]}, key=racket_sort_key),
+        has_rackets=has_rackets,
+        search_fields=search_fields,
         filter=search_filter,
         query=search_query,
         active_value=NORMALIZERS[search_filter](search_query) if search_query else "",
@@ -455,11 +496,14 @@ def stats():
         grouped.setdefault(m["부수"] or UNASSIGNED_DIVISION, []).append(m)
 
     # 2. 부수별 인원 분포 + 부수별 라켓 구성 (막대 길이는 인원이 가장 많은 부수 기준)
+    # 라켓 정보가 없으면 막대를 나누지 않고 '전체' 한 조각으로 그린다
+    has_rackets = has_racket_data(members)
     max_count = max((len(ms) for ms in grouped.values()), default=0)
     groups = []
     for i, (division, div_members) in enumerate(grouped.items(), start=1):
         count = len(div_members)
-        racket_counts = Counter(m["라켓"] if m["라켓"] in RACKET_ORDER else "기타" for m in div_members)
+        racket_counts = (Counter(m["라켓"] if m["라켓"] in RACKET_ORDER else "기타" for m in div_members)
+                         if has_rackets else Counter({"전체": count}))
         groups.append({
             "division": division,
             "anchor": f"group-{i}",
@@ -467,10 +511,10 @@ def stats():
             "count": count,
             "ratio": round((count / total_count) * 100, 1),
             "width": round((count / max_count) * 100, 1),
-            "rackets": [(r, racket_counts[r]) for r in (*RACKET_ORDER, "기타") if racket_counts[r]],
+            "rackets": [(r, racket_counts[r]) for r in (*RACKET_ORDER, "기타", "전체") if racket_counts[r]],
         })
     present = {name for g in groups for name, _ in g["rackets"]}
-    legend = [r for r in (*RACKET_ORDER, "기타") if r in present]
+    legend = [r for r in (*RACKET_ORDER, "기타") if r in present]  # '전체' 한 조각일 때는 범례가 없다
 
     # 명단에서 특정 부수만 보기 (인원이 많아질 때 스크롤을 줄이기 위한 선택). 값이 없으면 전체
     selected_division = request.args.get("division", "").strip()
@@ -501,6 +545,7 @@ def stats():
         groups=groups,
         legend=legend,
         racket_stats=racket_stats,
+        has_rackets=has_rackets,
         total_count=total_count,
         selected_division=selected_division,
         is_dummy=is_dummy

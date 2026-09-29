@@ -5,7 +5,7 @@ import argparse
 
 # Import normalization rules and Google Sheets helpers from app.py
 try:
-    from app import SHEET_NAME, create_sheet_client, has_credentials, normalize_name, normalize_division, normalize_racket
+    from app import MEMBER_WORKSHEET, SHEET_NAME, create_sheet_client, has_credentials, normalize_name, normalize_division, normalize_racket, open_spreadsheet
 except ImportError:
     print("[ERROR] app.py를 찾을 수 없습니다. 스크립트를 프로젝트 루트 폴더에서 실행해 주세요.")
     sys.exit(1)
@@ -70,9 +70,9 @@ def run_upload(file_path, mode):
     if total_count == 0:
         return 0, "업로드할 유효한 데이터가 없습니다."
         
-    client = get_gspread_client()
-    spreadsheet = client.open(SHEET_NAME)
-    sheet = spreadsheet.sheet1
+    get_gspread_client()  # 인증 파일·라이브러리 확인
+    spreadsheet = open_spreadsheet()  # 부수표 파일 (ID 또는 제목으로 연다)
+    sheet = spreadsheet.worksheet(MEMBER_WORKSHEET)  # 표 형태 시트
     
     rows_to_upload = [[m["이름"], m["부수"], m["라켓"]] for m in members]
     

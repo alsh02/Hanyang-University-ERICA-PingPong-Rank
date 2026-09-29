@@ -37,8 +37,8 @@
 
 <!-- 메뉴 -->
 {% set menus = [
-    ('search', 'search', '부원 검색', '이름은 초성으로, 부수·라켓은 버튼으로 바로 찾습니다.'),
-    ('stats', 'bar-chart-3', '통계 대시보드', '부수별 인원 분포와 라켓 전형 구성을 한눈에 봅니다.'),
+    ('search', 'search', '부원 검색', '이름은 초성으로, 부수' ~ ('·라켓은' if has_rackets else '는') ~ ' 버튼으로 바로 찾습니다.'),
+    ('stats', 'bar-chart-3', '통계 대시보드', '부수별 인원 분포' ~ ('와 라켓 전형 구성' if has_rackets else '') ~ '을 한눈에 봅니다.'),
     ('scoreboard', 'trophy', '경기 점수판', '11점·21점 경기 점수를 매기고 상대 전적을 쌓습니다.'),
 ] %}
 <div class="mx-auto mt-8 grid max-w-4xl gap-3 sm:mt-10 sm:grid-cols-3">

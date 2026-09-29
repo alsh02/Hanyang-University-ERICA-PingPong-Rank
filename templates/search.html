@@ -22,7 +22,7 @@
     <h1 class="text-2xl font-extrabold tracking-tight sm:text-3xl">
         탁우회 부원 <span class="text-red-600 dark:text-red-400">부수 검색</span>
     </h1>
-    <p class="mt-2 max-w-md break-keep text-sm leading-relaxed text-zinc-500 [text-wrap:balance] dark:text-zinc-400">이름, 부수, 사용 라켓까지 부원 정보를 한 번에 확인할 수 있습니다.</p>
+    <p class="mt-2 max-w-md break-keep text-sm leading-relaxed text-zinc-500 [text-wrap:balance] dark:text-zinc-400">{% if has_rackets %}이름, 부수, 사용 라켓까지 부원 정보를 한 번에 확인할 수 있습니다.{% else %}이름과 부수를 한 번에 확인할 수 있습니다.{% endif %}</p>
     <span class="mt-3 h-1 w-10 rounded-full bg-red-600 dark:bg-rubber"></span>
 </div>
 
@@ -32,7 +32,7 @@
 
     <!-- 검색 기준 (이름 / 부수 / 라켓) -->
     <div class="grid grid-cols-3 gap-1 rounded-xl border border-zinc-200 bg-white p-1 dark:border-zinc-800 dark:bg-zinc-900" role="group" aria-label="검색 기준">
-        {% for field in ['이름', '부수', '라켓'] %}
+        {% for field in search_fields %}
         <a href="{{ url_for('search', filter=field) }}" data-tab="{{ field }}" {% if filter == field %}aria-current="true"{% endif %}
            class="flex h-10 items-center justify-center rounded-lg text-sm font-semibold text-zinc-500 transition-colors hover:text-zinc-900 aria-[current=true]:bg-red-600 aria-[current=true]:text-white dark:text-zinc-400 dark:hover:text-zinc-100 dark:aria-[current=true]:bg-rubber">
             {{ field }}
@@ -63,7 +63,7 @@
     } %}
     {# 부수 버튼은 한 줄에 모바일 4개·데스크톱 6개씩 같은 폭으로, 마지막 줄은 가운데 정렬 #}
     {% set chip_widths = {'부수': 'w-[calc((100%_-_1.5rem)/4)] sm:w-[calc((100%_-_2.5rem)/6)]', '라켓': 'w-full'} %}
-    {% for field, options in [('부수', divisions), ('라켓', rackets)] %}
+    {% for field, options in [('부수', divisions), ('라켓', rackets)] if field in search_fields %}
     <div data-control-for="{{ field }}" class="mt-3 {{ control_layouts[field] }}" {% if filter != field %}hidden{% endif %}>
         {% for option in options %}
         <a href="{{ url_for('search', filter=field, query=option) }}" data-chip="{{ option }}" {% if filter == field and active_value == option %}aria-current="true"{% endif %}
@@ -110,7 +110,9 @@
                 {% endif %}
             </p>
             <h3 class="min-w-0 flex-1 truncate text-lg font-bold tracking-tight">{{ member.이름 }}</h3>
+            {% if has_rackets %}
             <p class="flex-shrink-0 text-xs font-medium {{ 'text-zinc-500 dark:text-zinc-400' if member.라켓 else 'text-zinc-400 dark:text-zinc-500' }}">{{ member.라켓 or '라켓 미입력' }}</p>
+            {% endif %}
         </article>
         {% endfor %}
     </div>
@@ -122,7 +124,7 @@
         </div>
         <h2 class="text-base font-bold">부원을 검색해 보세요</h2>
         <p class="mx-auto mt-2 max-w-sm break-keep px-4 text-sm text-zinc-500 dark:text-zinc-400">
-            이름은 초성(예: ㅎㄱㄷ)으로도 찾을 수 있고, 부수와 라켓은 버튼으로 바로 고를 수 있습니다.
+            이름은 초성(예: ㅎㄱㄷ)으로도 찾을 수 있고, 부수{{ '와 라켓은' if has_rackets else '는' }} 버튼으로 바로 고를 수 있습니다.
         </p>
         <p class="mt-4 text-xs text-zinc-400 dark:text-zinc-500">등록 부원 <strong class="text-zinc-600 dark:text-zinc-300">{{ total_count }}</strong>명</p>
     </div>
