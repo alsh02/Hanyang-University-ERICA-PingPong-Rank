@@ -31,24 +31,17 @@
             {% endfor %}
         </div>
     </div>
+    <!-- 경기 방식은 3판 2선으로 시작해 정해 둔 라운드부터 5판 3선 -->
     <div>
-        <p class="mb-1.5 text-xs font-semibold text-zinc-500 dark:text-zinc-400">경기 방식</p>
-        <div class="grid grid-cols-2 gap-2">
-            {% for best_of in best_of_options %}
-            <button type="button" data-option="best_of" data-value="{{ best_of }}" {% if loop.first %}aria-current="true"{% endif %} class="{{ option_class }}">{{ best_of }}판 {{ best_of // 2 + 1 }}선</button>
-            {% endfor %}
-        </div>
-        <!-- 3판 2선으로 시작해 정해 둔 라운드부터 5판 3선 -->
-        <div id="best-of-from-row" class="mt-2 grid grid-cols-[1fr_auto] items-center gap-2">
-            <span class="text-xs text-zinc-500 dark:text-zinc-400">이 라운드부터는 5판 3선</span>
-            <select id="best-of-from" class="h-9 rounded-lg border border-zinc-200 bg-white px-2 text-sm font-semibold dark:border-zinc-800 dark:bg-zinc-900">
-                <option value="0">전환 없음 (끝까지 3판)</option>
-                <option value="2">결승부터</option>
-                <option value="4" selected>준결승부터</option>
-                <option value="8">8강부터</option>
-                <option value="16">16강부터</option>
-            </select>
-        </div>
+        <label for="best-of-from" class="mb-1.5 block text-xs font-semibold text-zinc-500 dark:text-zinc-400">5판 3선 전환</label>
+        <select id="best-of-from" class="{{ input_class }}">
+            <option value="0">전환 없음 (끝까지 3판 2선)</option>
+            <option value="2">결승부터 5판 3선</option>
+            <option value="4" selected>준결승부터 5판 3선</option>
+            <option value="8">8강부터 5판 3선</option>
+            <option value="16">16강부터 5판 3선</option>
+        </select>
+        <p class="mt-1.5 text-xs text-zinc-400 dark:text-zinc-500">초반 경기는 3판 2선이고, 고른 라운드부터 5판 3선으로 진행합니다. 진행 중에도 바꿀 수 있습니다.</p>
     </div>
     <div>
         <p class="mb-1.5 text-xs font-semibold text-zinc-500 dark:text-zinc-400">대진 배치</p>
@@ -91,13 +84,12 @@
 <script>
 (() => {
     const form = document.getElementById('create-form');
-    const choice = { target: 11, best_of: 3, seed: 'random' };
+    const choice = { target: 11, seed: 'random' };   // 경기 방식은 늘 3판 2선으로 시작한다
 
     form.addEventListener('click', (event) => {
         const button = event.target.closest('[data-option]');
         if (!button) return;
         choice[button.dataset.option] = isNaN(button.dataset.value) ? button.dataset.value : Number(button.dataset.value);
-        if (button.dataset.option === 'best_of') document.getElementById('best-of-from-row').hidden = choice.best_of !== 3;
         button.parentElement.querySelectorAll('[data-option]').forEach((el) => el.removeAttribute('aria-current'));
         button.setAttribute('aria-current', 'true');
     });

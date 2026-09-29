@@ -545,13 +545,14 @@ def api_create():
     _check_write_limit()
     data = request.get_json(silent=True) or {}
     name = str(data.get("name", "")).strip()[:40] or f"탁우회 리그전 {kst_now()[:10]}"
+    # 경기 방식은 늘 3판 2선으로 시작하고, best_of_from(남은 선수 수)부터 5판 3선
+    best_of = 3
     try:
         target = int(data.get("target", 11))
-        best_of = int(data.get("best_of", 3))
         best_of_from = int(data.get("best_of_from", 0) or 0)
     except (TypeError, ValueError):
         raise LeagueError("경기 방식이 올바르지 않습니다.")
-    if target not in _deps["point_targets"] or best_of not in _deps["best_of_options"]:
+    if target not in _deps["point_targets"]:
         raise LeagueError("지원하지 않는 경기 방식입니다.")
     if best_of_from not in (0, 2, 4, 8, 16, 32):
         raise LeagueError("5판 3선 전환 시점이 올바르지 않습니다.")
@@ -567,7 +568,7 @@ def api_create():
     state = {
         "code": code, "name": name, "status": "lobby", "created_at": kst_now(), "updated_at": kst_now(),
         "admin_key": secrets.token_urlsafe(18), "admin_code": admin_code,
-        "format": {"target": target, "best_of": best_of, "best_of_from": best_of_from if best_of == 3 else 0},
+        "format": {"target": target, "best_of": best_of, "best_of_from": best_of_from},
         "groups": groups, "seed": seed, "group_overrides": {}, "removed": [], "brackets": {},
     }
     save_state(state)

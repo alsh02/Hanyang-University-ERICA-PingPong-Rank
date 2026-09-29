@@ -148,7 +148,8 @@
         const t = tournament;
         $('room-name').textContent = t.name;
         $('room-code').textContent = t.code;
-        $('room-format').textContent = `${t.format.target}점 · ${t.format.best_of}판 ${Math.floor(t.format.best_of / 2) + 1}선 · ${t.seed === 'division' ? '부수 시드' : '무작위 배치'}`;
+        const fromLabel = { 2: '결승', 4: '준결승', 8: '8강', 16: '16강', 32: '32강' }[t.format.best_of_from];
+        $('room-format').textContent = `${t.format.target}점 · 3판 2선${fromLabel ? ` · ${fromLabel}부터 5판 3선` : ''} · ${t.seed === 'division' ? '부수 시드' : '무작위 배치'}`;
         const pill = $('status-pill');
         pill.textContent = t.status_label;
         pill.className = 'mb-3 rounded-full border px-3 py-1 text-xs font-semibold ' + ({
@@ -250,10 +251,10 @@
             $('admin-tools').innerHTML = `
                 <span class="font-semibold text-zinc-500 dark:text-zinc-400">${escapeHtml(groupName(activeGroup))} 운영</span>
                 ${b && b.rounds >= 2 ? button(b.third ? '3·4위전 취소' : '3·4위전 진행', `data-third="${b.third ? 'off' : 'on'}"`, b.third ? 'ghost' : 'primary') : '<span class="text-zinc-400">3·4위전 없음(준결승 없음)</span>'}
-                ${t.format.best_of === 3 ? `<label class="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-300">5판 3선
+                <label class="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-300">5판 3선 전환
                     <select id="best-of-from" class="h-8 rounded-lg border border-zinc-200 bg-white px-1.5 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-900">
                         ${[[0, '전환 없음'], [2, '결승부터'], [4, '준결승부터'], [8, '8강부터'], [16, '16강부터']].map(([v, l]) => `<option value="${v}" ${v === from ? 'selected' : ''}>${l}</option>`).join('')}
-                    </select></label>` : ''}`;
+                    </select></label>`;
         }
         if (!b || b.rounds === 0) {
             $('rounds').innerHTML = `<div class="w-full rounded-2xl border border-dashed border-zinc-300 py-10 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
