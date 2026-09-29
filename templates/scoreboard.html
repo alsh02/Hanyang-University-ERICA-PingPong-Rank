@@ -516,7 +516,7 @@
         const division = (name) => (t.participants.find((p) => p.name === name) || {}).division || '미지정';
         state.players = match.players.map((name) => ({ name, division: division(name) }));
         state.target = t.format.target;
-        state.bestOf = t.format.best_of;
+        state.bestOf = match.best_of;   // 라운드에 따라 3판 또는 5판
         pickers.forEach((picker) => picker.sync());
         // 경기 방식과 선수는 대진표가 정한 대로 고정한다
         setup.querySelectorAll('[data-option="target"], [data-option="bestOf"]').forEach((el) => {
