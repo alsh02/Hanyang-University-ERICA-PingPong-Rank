@@ -28,7 +28,7 @@ LOG_SHEET = "토너먼트로그"
 TOURNAMENT_HEADERS = ["코드", "상태", "생성일시", "갱신일시", "상태JSON"]
 LOG_HEADERS = ["코드", "종류", "시각", "내용JSON"]
 
-CACHE_TTL = 3            # 참가자 화면이 몇 초마다 새로 고쳐도 시트 호출은 이 간격으로만 나간다
+CACHE_TTL = 3            # 참가자 화면이 몇 초마다 새로 고쳐도 시트 호출은 이 간격으로만 나간다 (인스턴스마다)
 WRITE_LIMIT = 240        # 10분당 쓰기 허용 횟수 (공개 주소이므로 최소한의 남용 방지)
 CODE_ALPHABET = "0123456789"   # 참가 코드·관리자 코드 모두 숫자 6자리
 ADMIN_LOGIN_LIMIT = 30         # 10분당 관리자 코드 입력 시도 허용 횟수
@@ -60,6 +60,8 @@ _lock = threading.Lock()
 _cache = {"rows": None, "logs": None, "expires_at": 0.0}
 _writes = deque()
 _admin_logins = deque()
+_sheets_ready = False
+RANGES = [f"'{TOURNAMENT_SHEET}'!A:E", f"'{LOG_SHEET}'!A:D"]
 
 
 class LeagueError(Exception):
@@ -68,25 +70,33 @@ class LeagueError(Exception):
         self.status = status
 
 
-def _worksheet(title, headers):
-    import gspread
+def _spreadsheet():
+    return _deps["open_records_spreadsheet"]()
 
-    spreadsheet = _deps["open_records_spreadsheet"]()
-    try:
-        return spreadsheet.worksheet(title)
-    except gspread.WorksheetNotFound:
-        worksheet = spreadsheet.add_worksheet(title=title, rows=1000, cols=len(headers))
-        worksheet.append_row(headers)
-        return worksheet
+
+def _ensure_sheets():
+    # 두 시트가 있는지는 인스턴스마다 한 번만 확인하고(메타데이터 호출 1회), 없으면 만든다
+    global _sheets_ready
+    if _sheets_ready:
+        return
+    spreadsheet = _spreadsheet()
+    existing = {ws.title for ws in spreadsheet.worksheets()}
+    for title, headers in ((TOURNAMENT_SHEET, TOURNAMENT_HEADERS), (LOG_SHEET, LOG_HEADERS)):
+        if title not in existing:
+            spreadsheet.add_worksheet(title=title, rows=1000, cols=len(headers)).append_row(headers)
+    _sheets_ready = True
 
 
 def _read_all(force=False):
-    # 두 시트를 통째로 읽어 잠깐 캐시한다. 참가자 수십 명이 4초마다 새로 고쳐도 시트 호출은 몇 초에 한 번이다.
+    # 두 시트를 API 호출 한 번(values_batch_get)으로 읽어 잠깐 캐시한다.
+    # 구글 시트 읽기 한도가 사용자당 분당 60회라, 참가자 폰이 몇 초마다 새로 고쳐도 인스턴스당 호출은 CACHE_TTL마다 한 번이다.
     with _lock:
         now = time.monotonic()
         if force or now >= _cache["expires_at"] or _cache["rows"] is None:
-            _cache["rows"] = _worksheet(TOURNAMENT_SHEET, TOURNAMENT_HEADERS).get_all_values()
-            _cache["logs"] = _worksheet(LOG_SHEET, LOG_HEADERS).get_all_values()
+            _ensure_sheets()
+            ranges = _spreadsheet().values_batch_get(RANGES).get("valueRanges", [])
+            _cache["rows"] = ranges[0].get("values", []) if len(ranges) > 0 else []
+            _cache["logs"] = ranges[1].get("values", []) if len(ranges) > 1 else []
             _cache["expires_at"] = now + CACHE_TTL
         return _cache["rows"], _cache["logs"]
 
@@ -118,34 +128,39 @@ def load_state(code, force=False):
     # 방 상태(JSON) + 로그(참가·보고)를 합쳐 하나의 상태로 돌려준다
     code = normalize_code(code)
     rows, logs = _read_all(force)
-    _, row = _find_row(rows, code)
+    row_no, row = _find_row(rows, code)
     if row is None or len(row) < 5 or not row[4]:
         raise LeagueError("그 코드의 토너먼트가 없습니다.", 404)
     state = json.loads(row[4])
+    state["_row_no"] = row_no   # 저장할 때 행을 다시 찾지 않도록 기억해 둔다
     return assemble(state, [l for l in logs[1:] if l and l[0].strip().upper() == code])
 
 
+_WRITE_PARAMS = {"valueInputOption": "RAW"}
+
+
 def save_state(state):
-    # 운영진의 변경을 방 행에 통째로 다시 쓴다
+    # 운영진의 변경을 방 행에 한 번의 호출로 다시 쓴다 (행 번호는 읽을 때 기억해 둔 것)
     state["updated_at"] = kst_now()
-    worksheet = _worksheet(TOURNAMENT_SHEET, TOURNAMENT_HEADERS)
-    rows = worksheet.get_all_values()
-    row_no, _ = _find_row(rows, state["code"])
     values = [state["code"], state["status"], state["created_at"], state["updated_at"], json.dumps(persistable(state), ensure_ascii=False)]
+    row_no = state.get("_row_no")
     if row_no is None:
-        worksheet.append_row(values)
+        _ensure_sheets()
+        _spreadsheet().values_append(RANGES[0], {**_WRITE_PARAMS, "insertDataOption": "INSERT_ROWS"}, {"values": [values]})
     else:
-        worksheet.update(values=[values], range_name=f"A{row_no}:E{row_no}")
+        _spreadsheet().values_update(f"'{TOURNAMENT_SHEET}'!A{row_no}:E{row_no}", _WRITE_PARAMS, {"values": [values]})
     _invalidate()
 
 
 def append_log(code, kind, payload):
-    _worksheet(LOG_SHEET, LOG_HEADERS).append_row([code, kind, kst_now(), json.dumps(payload, ensure_ascii=False)])
+    _ensure_sheets()
+    _spreadsheet().values_append(RANGES[1], {**_WRITE_PARAMS, "insertDataOption": "INSERT_ROWS"},
+                                 {"values": [[code, kind, kst_now(), json.dumps(payload, ensure_ascii=False)]]})
     _invalidate()
 
 
 def delete_tournament(code):
-    worksheet = _worksheet(TOURNAMENT_SHEET, TOURNAMENT_HEADERS)
+    worksheet = _spreadsheet().worksheet(TOURNAMENT_SHEET)
     row_no, _ = _find_row(worksheet.get_all_values(), code)
     if row_no:
         worksheet.delete_rows(row_no)
@@ -208,11 +223,8 @@ def assemble(state, logs):
         elif kind == "보고":
             reports[data.get("match")] = {**data, "at": at}
 
-    for p in participants:
-        auto_group, decided = group_for(p["division"], state["groups"])
-        override = state.get("group_overrides", {}).get(p["name"])
-        p["group"] = override or auto_group
-        p["group_undecided"] = not decided and not override
+    state["participants"] = participants
+    apply_groups(state)
 
     for bracket in state.get("brackets", {}).values():
         for match in bracket["matches"] + ([bracket["third"]] if bracket.get("third") else []):
@@ -220,14 +232,22 @@ def assemble(state, logs):
             match["report"] = None if match["status"] == "confirmed" or not report else {
                 k: report.get(k) for k in ("winner", "games", "by", "at")}
 
-    state["participants"] = participants
     state["_tokens"] = tokens
     return state
 
 
+def apply_groups(state):
+    # 참가자마다 그룹을 정한다 (운영진이 바꾼 것이 있으면 그것을 우선)
+    for p in state["participants"]:
+        auto_group, decided = group_for(p["division"], state["groups"])
+        override = state.get("group_overrides", {}).get(p["name"])
+        p["group"] = override or auto_group
+        p["group_undecided"] = not decided and not override
+
+
 def public_view(state):
-    # 참가자 화면에 보내는 상태: 운영 키와 참가 토큰은 뺀다
-    view = {k: v for k, v in state.items() if k not in ("admin_key", "admin_code", "_tokens")}
+    # 참가자 화면에 보내는 상태: 운영 키·참가 토큰·내부 값은 뺀다
+    view = {k: v for k, v in state.items() if k not in ("admin_key", "admin_code", "_tokens", "_row_no")}
     view["status_label"] = STATUS_LABELS.get(state["status"], state["status"])
     return view
 
@@ -473,6 +493,17 @@ def _handle_error(error):
     return jsonify({"error": str(error)}), error.status
 
 
+@league_bp.errorhandler(Exception)
+def _handle_unexpected(error):
+    import gspread
+
+    if isinstance(error, gspread.exceptions.APIError):
+        _deps["logger"].error("리그전 구글 시트 오류: %s", error)
+        return jsonify({"error": "구글 시트 응답이 늦거나 호출 한도를 넘었습니다. 잠시 후 다시 시도해 주세요."}), 503
+    _deps["logger"].exception("리그전 처리 오류")
+    return jsonify({"error": "처리 중 오류가 났습니다. 잠시 후 다시 시도해 주세요."}), 500
+
+
 @league_bp.route("/league")
 def league_home():
     return render_template("league/home.html")
@@ -581,7 +612,7 @@ def api_settings(code):
             if m["status"] not in ("confirmed", "bye"):
                 m["best_of"] = match_best_of(state["format"], 2 if m.get("third") else bracket["size"] >> (m["round"] - 1))
     save_state(state)
-    return _ok(load_state(code, force=True))
+    return _ok(state)
 
 
 @league_bp.route("/api/league/<code>/third-place", methods=["POST"])
@@ -599,7 +630,7 @@ def api_third_place(code):
     set_third_place(state["brackets"][group], group, state["format"], bool(data.get("enabled")))
     refresh_status(state)
     save_state(state)
-    return _ok(load_state(code, force=True))
+    return _ok(state)
 
 
 def _parse_groups(raw):
@@ -645,7 +676,10 @@ def api_join(code):
         raise LeagueError("이미 참가한 이름입니다. 본인이 맞다면 처음 참가한 기기에서 열어 주세요.", 409)
     token = secrets.token_urlsafe(12)
     append_log(state["code"], "참가", {"name": name, "division": members[name]["부수"], "token": token})
-    return jsonify({"token": token, "name": name, "tournament": public_view(load_state(code, force=True))})
+    # 방금 들어온 사람을 응답에 바로 넣어 준다 (다시 읽지 않음)
+    state["participants"].append({"name": name, "division": members[name]["부수"], "joined_at": kst_now()})
+    apply_groups(state)
+    return jsonify({"token": token, "name": name, "tournament": public_view(state)})
 
 
 @league_bp.route("/api/league/<code>/participants", methods=["POST"])
@@ -667,8 +701,11 @@ def api_participants(code):
         if group not in {g["key"] for g in state["groups"]}:
             raise LeagueError("그룹이 올바르지 않습니다.")
         state["group_overrides"][name] = group
+    if data.get("remove"):
+        state["participants"] = [p for p in state["participants"] if p["name"] != name]
+    apply_groups(state)
     save_state(state)
-    return _ok(load_state(code, force=True))
+    return _ok(state)
 
 
 @league_bp.route("/api/league/<code>/start", methods=["POST"])
@@ -677,7 +714,7 @@ def api_start(code):
     _require_admin(state)
     start_tournament(state)
     save_state(state)
-    return _ok(load_state(code, force=True))
+    return _ok(state)
 
 
 @league_bp.route("/api/league/<code>/matches/<match_id>/report", methods=["POST"])
@@ -709,7 +746,8 @@ def api_report(code, match_id):
     if reporter not in match["players"]:
         raise LeagueError("이 경기의 선수만 결과를 보낼 수 있습니다.", 403)
     append_log(state["code"], "보고", {"match": match_id, "winner": winner, "games": data.get("games") or None, "by": reporter})
-    return _ok(load_state(code, force=True), reported=True)
+    match["report"] = {"winner": winner, "games": data.get("games") or None, "by": reporter, "at": kst_now()}
+    return _ok(state, reported=True)
 
 
 @league_bp.route("/api/league/<code>/matches/<match_id>/confirm", methods=["POST"])
@@ -742,7 +780,7 @@ def _confirm_and_save(state, match_id, winner, games, by):
             _deps["record_match"](row)
         except Exception as e:  # 전적 기록 실패는 토너먼트 진행을 막지 않는다
             _deps["logger"].error("리그전 결과의 전적 기록 실패: %s", e)
-    return _ok(load_state(state["code"], force=True), confirmed=True)
+    return _ok(state, confirmed=True)
 
 
 @league_bp.route("/api/league/<code>/matches/<match_id>/reset", methods=["POST"])
@@ -752,7 +790,7 @@ def api_reset(code, match_id):
     _check_write_limit()
     reset_match(state, match_id)
     save_state(state)
-    return _ok(load_state(code, force=True))
+    return _ok(state)
 
 
 @league_bp.route("/api/league/<code>/delete", methods=["POST"])

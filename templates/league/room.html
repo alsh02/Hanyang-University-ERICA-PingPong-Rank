@@ -102,17 +102,23 @@
         if (canAdmin) headers['X-League-Key'] = adminKey;
         const response = await fetch(`/api/league/${code}${path}`, body === undefined ? { headers } : { method: 'POST', headers, body: JSON.stringify(body) });
         const data = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(data.error || '요청에 실패했습니다.');
+        if (!response.ok) throw new Error(data.error || (response.status >= 500 ? '서버 응답이 늦습니다. 잠시 후 다시 시도해 주세요.' : '요청에 실패했습니다.'));
         return data;
     }
+    let refreshFailures = 0;
     async function refresh() {
         try {
             const data = await api('');
             tournament = data.tournament;
+            refreshFailures = 0;
             render();
         } catch (e) {
-            $('status-pill').textContent = '연결 안 됨';
-            showNotice(e.message);
+            // 한두 번 실패는 조용히 다시 시도하고, 계속 실패할 때만 알린다
+            refreshFailures += 1;
+            if (refreshFailures >= 3 || !tournament) {
+                $('status-pill').textContent = '연결 재시도 중';
+                showNotice(e.message);
+            }
         }
     }
     async function act(path, body, done) {
@@ -387,7 +393,8 @@
     refresh();
     // 진행 중에는 6초, 끝난 뒤에는 20초마다. 화면이 안 보이거나 결과를 입력하는 중에는 쉰다.
     (function schedule() {
-        const delay = tournament && tournament.status === 'finished' ? 20000 : 6000;
+        // 여러 폰이 같은 순간에 몰리지 않도록 조금씩 어긋나게
+        const delay = (tournament && tournament.status === 'finished' ? 20000 : 6000) + Math.random() * 1500;
         setTimeout(() => { if (document.visibilityState === 'visible' && $('result-panel').hidden) refresh(); schedule(); }, delay);
     })();
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refresh(); });

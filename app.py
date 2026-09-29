@@ -234,35 +234,46 @@ def get_sheet_client():
         _sheet_client = create_sheet_client()
     return _sheet_client
 
+# 파일을 여는 것 자체가 구글 API 호출(제목 검색 + 메타데이터)이라 인스턴스마다 한 번만 열어 둔다
+_spreadsheets = {}
+
 def open_spreadsheet():
     # 부원 명단(부수표) 파일
-    client = get_sheet_client()
-    return client.open_by_key(SHEET_ID) if SHEET_ID else client.open(SHEET_NAME)
+    if "members" not in _spreadsheets:
+        client = get_sheet_client()
+        _spreadsheets["members"] = client.open_by_key(SHEET_ID) if SHEET_ID else client.open(SHEET_NAME)
+    return _spreadsheets["members"]
 
 def open_records_spreadsheet():
     # 경기 기록 파일
-    return get_sheet_client().open(RECORDS_SHEET_NAME)
+    if "records" not in _spreadsheets:
+        _spreadsheets["records"] = get_sheet_client().open(RECORDS_SHEET_NAME)
+    return _spreadsheets["records"]
+
+def is_missing_sheet_error(error):
+    # values API에 없는 시트 이름을 주면 400 "Unable to parse range"가 온다
+    response = getattr(error, "response", None)
+    return response is not None and response.status_code == 400 and "parse range" in response.text
 
 def has_racket_data(members):
     # 라켓 열이 통째로 비어 있으면 라켓 관련 화면(필터·칩·통계)을 숨긴다
     return any(m["라켓"] for m in members)
 
-def open_member_worksheet():
+def fetch_sheet_members():
     import gspread
 
-    # 부수표 파일에서 표 형태의 시트를 연다. 시트 이름이 바뀌었으면 두 번째 시트를 대신 쓴다.
+    # 부수표 파일의 표 형태 시트를 값 API 한 번으로 읽는다 (get_all_records()는 '0'을 숫자로 바꾸고 헤더가 겹치면 실패한다).
+    # 시트 이름이 바뀌었으면 두 번째 시트를 대신 쓴다.
     spreadsheet = open_spreadsheet()
     try:
-        return spreadsheet.worksheet(MEMBER_WORKSHEET)
-    except gspread.WorksheetNotFound:
+        return parse_sheet_rows(spreadsheet.values_get(f"'{MEMBER_WORKSHEET}'!A:Z").get("values", []))
+    except gspread.exceptions.APIError as e:
+        if not is_missing_sheet_error(e):
+            raise
         worksheet = spreadsheet.get_worksheet(1)
         if worksheet is None:
             raise ValueError(f"'{SHEET_NAME}' 파일에 '{MEMBER_WORKSHEET}' 시트가 없습니다.")
-        return worksheet
-
-def fetch_sheet_members():
-    # get_all_records()는 '0'을 숫자 0으로 바꾸고 헤더가 중복되면 실패하므로 원본 문자열로 받는다
-    return parse_sheet_rows(open_member_worksheet().get_all_values())
+        return parse_sheet_rows(worksheet.get_all_values())
 
 def get_sheet_data():
     # (부원 목록, 더미 데이터 여부)를 반환한다.
@@ -319,10 +330,11 @@ def fetch_match_records():
     import gspread
 
     try:
-        worksheet = open_records_spreadsheet().worksheet(MATCH_SHEET_NAME)
-    except gspread.WorksheetNotFound:
-        return []  # 아직 한 경기도 저장하지 않은 상태
-    return parse_match_rows(worksheet.get_all_values())
+        return parse_match_rows(open_records_spreadsheet().values_get(f"'{MATCH_SHEET_NAME}'!A:H").get("values", []))
+    except gspread.exceptions.APIError as e:
+        if is_missing_sheet_error(e):
+            return []  # 아직 한 경기도 저장하지 않은 상태
+        raise
 
 def get_match_records():
     # 경기 기록을 SHEET_CACHE_TTL초 동안 캐시해서 반환 (실패하면 마지막 기록 유지)
@@ -394,13 +406,16 @@ def append_match_row(row):
     import gspread
 
     spreadsheet = open_records_spreadsheet()
+    params = {"valueInputOption": "RAW", "insertDataOption": "INSERT_ROWS"}
     try:
-        worksheet = spreadsheet.worksheet(MATCH_SHEET_NAME)
-    except gspread.WorksheetNotFound:
+        spreadsheet.values_append(f"'{MATCH_SHEET_NAME}'!A:H", params, {"values": [row]})
+    except gspread.exceptions.APIError as e:
+        if not is_missing_sheet_error(e):
+            raise
         # 첫 기록이면 시트를 만들고 헤더부터 넣는다 (명단 시트는 건드리지 않음)
         worksheet = spreadsheet.add_worksheet(title=MATCH_SHEET_NAME, rows=1000, cols=len(MATCH_HEADERS))
         worksheet.append_row(MATCH_HEADERS)
-    worksheet.append_row(row)
+        worksheet.append_row(row)
 
 def record_match(row):
     # 경기기록 시트에 추가하고, 방금 저장한 경기를 캐시에도 반영해 전적·최근 경기가 바로 갱신되게 한다
@@ -611,6 +626,7 @@ import league  # noqa: E402  (app의 시트 접근 함수를 넘겨 주므로 �
 
 league.configure(
     open_records_spreadsheet=open_records_spreadsheet,
+    is_missing_sheet_error=is_missing_sheet_error,
     get_sheet_data=get_sheet_data,
     record_match=record_match,
     division_number=division_number,
