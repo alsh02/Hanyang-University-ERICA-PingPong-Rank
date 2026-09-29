@@ -23,6 +23,9 @@ SHEET_NAME = os.environ.get("SHEET_NAME", "26-2 탁우회 부수표")
 MEMBER_WORKSHEET = os.environ.get("MEMBER_WORKSHEET", "시트2")
 # 경기 기록은 부수표 파일이 아니라 서비스 계정이 편집할 수 있는 별도 파일에 쌓는다 (부수표는 학기마다 바뀌고 읽기 전용일 수 있음)
 RECORDS_SHEET_NAME = os.environ.get("RECORDS_SHEET_NAME", "탁우회_명단")
+# 리그전(토너먼트) 상태는 또 다른 파일에 둔다. 서비스 계정에 편집 권한으로 공유되어 있어야 한다. ID가 있으면 ID로 연다.
+LEAGUE_SHEET_NAME = os.environ.get("LEAGUE_SHEET_NAME", "탁우회 토너먼트")
+LEAGUE_SHEET_ID = os.environ.get("LEAGUE_SHEET_ID", "")
 # 구글 시트 캐시 유지 시간(초). 요청마다 API를 호출하면 느리고 분당 호출 한도도 금방 소진된다.
 SHEET_CACHE_TTL = int(os.environ.get("SHEET_CACHE_TTL", "60"))
 SHEET_RETRY_AFTER = 10  # 시트 연동 실패 후 재시도까지 대기(초)
@@ -249,6 +252,13 @@ def open_records_spreadsheet():
     if "records" not in _spreadsheets:
         _spreadsheets["records"] = get_sheet_client().open(RECORDS_SHEET_NAME)
     return _spreadsheets["records"]
+
+def open_league_spreadsheet():
+    # 리그전(토너먼트) 파일
+    if "league" not in _spreadsheets:
+        client = get_sheet_client()
+        _spreadsheets["league"] = client.open_by_key(LEAGUE_SHEET_ID) if LEAGUE_SHEET_ID else client.open(LEAGUE_SHEET_NAME)
+    return _spreadsheets["league"]
 
 def is_missing_sheet_error(error):
     # values API에 없는 시트 이름을 주면 400 "Unable to parse range"가 온다
@@ -625,7 +635,8 @@ def proposal():
 import league  # noqa: E402  (app의 시트 접근 함수를 넘겨 주므로 여기서 불러온다)
 
 league.configure(
-    open_records_spreadsheet=open_records_spreadsheet,
+    open_league_spreadsheet=open_league_spreadsheet,
+    league_sheet_name=LEAGUE_SHEET_NAME,
     is_missing_sheet_error=is_missing_sheet_error,
     get_sheet_data=get_sheet_data,
     record_match=record_match,

@@ -529,6 +529,9 @@
         $('league-banner-text').textContent = `리그전 ${t.name} · ${group} ${bracket.labels[match.round]} · 끝나면 결과가 대진표로 보내집니다`;
         $('league-banner-link').href = LEAGUE.backUrl;
         $('league-banner').hidden = false;
+        // 왼쪽 위 버튼은 메인이 아니라 대진표로
+        homeLink.href = LEAGUE.backUrl;
+        homeLink.querySelector('span').textContent = '대진표로';
         if (match.status !== 'pending') showToast('이미 결과가 확정된 경기입니다');
         syncSetup();
     }

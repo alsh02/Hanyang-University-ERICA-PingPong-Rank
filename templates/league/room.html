@@ -4,19 +4,10 @@
 
 {% block content %}
 <style>
-    /* 아이폰 사파리는 기본 모양의 select에 padding을 무시하므로 기본 모양을 끄고 화살표를 직접 그린다 */
-    .select-chevron {
-        -webkit-appearance: none;
-        appearance: none;
-        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-        background-repeat: no-repeat;
-        background-position: right 0.5rem center;
-        background-size: 0.875rem;
-    }
-    .dark .select-chevron {
-        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a1a1aa' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-    }
+    /* 작은 select는 화살표를 조금 작게, 안쪽으로 */
+    .select-chevron-sm { background-position: right 0.5rem center; background-size: 0.875rem; }
 </style>
+<script id="roster-data" type="application/json">{{ roster | tojson }}</script>
 <div id="room" data-code="{{ code }}" data-admin="{{ 'true' if is_admin else 'false' }}"
      data-scoreboard="{{ url_for('scoreboard') }}" data-join="{{ url_for('league.league_join', code=code) }}">
 
@@ -44,6 +35,16 @@
         <button type="submit" class="h-11 flex-shrink-0 rounded-xl bg-red-600 px-4 text-sm font-bold text-white hover:bg-red-700 dark:bg-rubber dark:hover:bg-red-500">운영 화면 열기</button>
     </form>
 
+    <!-- 운영진: 명단에서 골라 참가자를 미리 넣는다 -->
+    <div id="add-participant" hidden class="relative mx-auto mb-5 max-w-md">
+        <label for="add-input" class="mb-1.5 block text-xs font-semibold text-zinc-500 dark:text-zinc-400">참가자 추가 (명단에서 검색)</label>
+        <input id="add-input" type="text" role="combobox" aria-expanded="false" aria-controls="add-list" aria-autocomplete="list"
+               autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="이름 또는 초성 · 누르면 바로 추가"
+               class="h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-900 placeholder-zinc-400 focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/30 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder-zinc-500">
+        <ul id="add-list" role="listbox" hidden aria-label="추가할 부원"
+            class="absolute left-0 right-0 top-full z-30 mt-1 max-h-60 overflow-y-auto overscroll-contain rounded-xl border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"></ul>
+    </div>
+
     <!-- 참가 접수 -->
     <section id="lobby" hidden class="mx-auto max-w-3xl">
         <div id="lobby-groups" class="grid gap-3 sm:grid-cols-3"></div>
@@ -70,7 +71,7 @@
             <p class="mb-3 text-base font-bold">승자를 고르세요</p>
             <div id="result-winners" class="grid grid-cols-2 gap-2"></div>
             <label class="mt-4 block">
-                <span class="mb-1.5 block text-xs font-semibold text-zinc-500 dark:text-zinc-400">게임 점수 (선택) · 예: 11:7, 9:11, 11:8</span>
+                <span id="result-games-label" class="mb-1.5 block text-xs font-semibold text-zinc-500 dark:text-zinc-400">게임 점수 (선택) · 예: 11:7, 9:11, 11:8</span>
                 <input id="result-games" type="text" inputmode="numeric" placeholder="비워 두면 승자만 기록합니다" autocomplete="off"
                        class="h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-900 placeholder-zinc-400 focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/30 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:placeholder-zinc-500">
             </label>
@@ -87,9 +88,11 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='hangul-search.js') }}"></script>
 <script>
 (() => {
     const root = document.getElementById('room');
+    const ROSTER = JSON.parse(document.getElementById('roster-data').textContent || '[]');
     const code = root.dataset.code, isAdmin = root.dataset.admin === 'true';
     const $ = (id) => document.getElementById(id);
     const escapeHtml = (text) => String(text).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
@@ -248,6 +251,7 @@
 
         $('lobby').hidden = t.status !== 'lobby';
         $('bracket').hidden = t.status === 'lobby';
+        $('add-participant').hidden = !(canAdmin && t.status !== 'finished');
         if (t.status === 'lobby') renderLobby(t); else { renderBracket(t); notifyNewReports(t); }
         window.lucide && lucide.createIcons();
     }
@@ -261,9 +265,10 @@
                         <span class="truncate font-semibold ${me && p.name === me.name ? 'text-red-600 dark:text-red-400' : ''}">${escapeHtml(p.name)}</span>
                         <span class="flex-shrink-0 text-xs text-zinc-400 dark:text-zinc-500">${escapeHtml(p.division || '미지정')}</span>
                         ${p.group_undecided ? '<span class="flex-shrink-0 rounded border border-amber-300 px-1 text-[10px] font-semibold text-amber-700 dark:border-amber-500/40 dark:text-amber-300">배정 확인</span>' : ''}
+                        ${p.added_by_admin && canAdmin ? '<span class="flex-shrink-0 text-[10px] font-medium text-zinc-400 dark:text-zinc-500" title="본인 폰에서 참가하지 않아 결과 보고는 운영진이 합니다">운영진 등록</span>' : ''}
                     </span>
                     ${canAdmin ? `<span class="flex flex-shrink-0 items-center gap-1">
-                        <select data-move="${escapeHtml(p.name)}" aria-label="${escapeHtml(p.name)} 그룹" class="select-chevron h-7 rounded-md border border-zinc-200 bg-white pl-2.5 pr-7 text-xs text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+                        <select data-move="${escapeHtml(p.name)}" aria-label="${escapeHtml(p.name)} 그룹" class="select-chevron select-chevron-sm h-7 rounded-md border border-zinc-200 bg-white pl-2.5 pr-7 text-xs text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
                             ${t.groups.map((o) => `<option value="${o.key}" ${o.key === p.group ? 'selected' : ''}>${escapeHtml(o.name)}</option>`).join('')}
                         </select>
                         ${button('<i data-lucide="x" class="h-3.5 w-3.5"></i>', `data-remove="${escapeHtml(p.name)}" aria-label="${escapeHtml(p.name)} 제외"`, 'quiet')}
@@ -283,8 +288,7 @@
         const total = t.participants.length;
         $('lobby-actions').innerHTML = canAdmin
             ? `<p class="text-sm text-zinc-500 dark:text-zinc-400">지금까지 <strong class="text-zinc-900 dark:text-zinc-100">${total}</strong>명이 들어왔습니다. 모두 들어왔으면 시작하세요.</p>
-               <button type="button" id="start-button" ${total < 2 ? 'disabled' : ''} class="mt-1 h-12 w-full max-w-xs rounded-xl bg-red-600 text-base font-bold text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:bg-rubber dark:hover:bg-red-500 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500">토너먼트 시작</button>
-               <p class="text-xs text-zinc-400 dark:text-zinc-500">시작하면 그룹마다 대진표가 만들어지고 참가는 마감됩니다.</p>`
+               <button type="button" id="start-button" ${total < 2 ? 'disabled' : ''} class="mt-1 h-12 w-full max-w-xs rounded-xl bg-red-600 text-base font-bold text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:bg-rubber dark:hover:bg-red-500 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500">토너먼트 시작</button>`
             : `<p class="text-sm text-zinc-500 dark:text-zinc-400">${me ? `<strong class="text-zinc-900 dark:text-zinc-100">${escapeHtml(me.name)}</strong>으로 참가했습니다. ` : ''}운영진이 시작하면 대진표가 여기 나타납니다.</p>`;
     }
 
@@ -315,7 +319,7 @@
             const reported = mine.report && mine.report.by === me.name;
             $('my-match').innerHTML = `<div class="rounded-2xl border-2 border-red-600 bg-white p-4 dark:border-red-500/60 dark:bg-zinc-900">
                 <p class="text-xs font-semibold text-red-600 dark:text-red-400">내 다음 경기 · ${escapeHtml(groupName(groupOf(me.name)))} ${escapeHtml(stage)} · ${mine.best_of}판 ${Math.floor(mine.best_of / 2) + 1}선</p>
-                <p class="mt-1 text-lg font-bold">${escapeHtml(me.name)} <span class="mx-1 text-sm font-medium text-zinc-400">vs</span> ${escapeHtml(opponent)} <span class="ml-1 text-xs font-medium text-zinc-400">${escapeHtml(divisionOf(opponent))}</span></p>
+                <p class="mt-1 text-lg font-bold">${mine.players.map((p) => `<span class="${p === me.name ? 'text-red-600 dark:text-red-400' : ''}">${escapeHtml(p)}</span> <span class="text-xs font-medium text-zinc-400">${escapeHtml(divisionOf(p))}</span>`).join(' <span class="mx-1 text-sm font-medium text-zinc-400">vs</span> ')}</p>
                 ${reported ? `<p class="mt-2 text-sm text-zinc-500 dark:text-zinc-400">결과를 보냈습니다 (승자 ${escapeHtml(mine.report.winner)}). 운영진 확인을 기다리는 중입니다.</p>` : ''}
                 <div class="mt-3 flex flex-wrap gap-2">
                     <a href="${root.dataset.scoreboard}?league=${code}&match=${mine.id}" class="inline-flex h-9 items-center gap-1.5 rounded-lg bg-red-600 px-3 text-sm font-semibold text-white hover:bg-red-700 dark:bg-rubber dark:hover:bg-red-500"><i data-lucide="trophy" class="h-4 w-4"></i>점수판으로 경기</a>
@@ -326,13 +330,17 @@
 
         const b = t.brackets[activeGroup];
         $('admin-tools').hidden = !canAdmin;
+        const locked = b && b.matches.concat(b.third ? [b.third] : []).some((m) => m.status === 'confirmed');
+        if (locked) editMode = false;
         if (canAdmin) {
             const from = t.format.best_of_from || 0;
             $('admin-tools').innerHTML = `
                 <span class="font-semibold text-zinc-500 dark:text-zinc-400">${escapeHtml(groupName(activeGroup))} 운영</span>
+                ${b && b.rounds >= 1 ? (locked ? '<span class="text-zinc-400">결과가 확정되어 대진은 고정</span>'
+                    : `${button(editMode ? '대진 수정 끝' : '대진 수정', 'data-edit', editMode ? 'primary' : 'ghost')}${button('무작위 재배치', 'data-rebuild="random"')}${button('부수 시드 재배치', 'data-rebuild="division"')}`) : ''}
                 ${b && b.rounds >= 2 ? button(b.third ? '3·4위전 취소' : '3·4위전 진행', `data-third="${b.third ? 'off' : 'on'}"`, b.third ? 'ghost' : 'primary') : '<span class="text-zinc-400">3·4위전 없음(준결승 없음)</span>'}
                 <label class="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-300">5판 3선 전환
-                    <select id="best-of-from" class="select-chevron h-8 rounded-lg border border-zinc-200 bg-white pl-2.5 pr-8 text-xs font-semibold text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+                    <select id="best-of-from" class="select-chevron select-chevron-sm h-8 rounded-lg border border-zinc-200 bg-white pl-2.5 pr-8 text-xs font-semibold text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
                         ${[[0, '전환 없음'], [2, '결승부터'], [4, '준결승부터'], [8, '8강부터'], [16, '16강부터']].map(([v, l]) => `<option value="${v}" ${v === from ? 'selected' : ''}>${l}</option>`).join('')}
                     </select></label>`;
         }
@@ -356,6 +364,7 @@
     }
 
     function renderMatch(m, byId, b) {
+        if (editMode && m.round === 1 && !m.third) return renderEditableMatch(m, b);
         const chip = {
             waiting: ['대기', 'text-zinc-400 dark:text-zinc-500'],
             pending: ['경기 가능', 'text-red-600 dark:text-red-400'],
@@ -393,6 +402,50 @@
         </article>`;
     }
 
+    // 수정 모드의 1라운드 카드: 각 자리에서 다른 선수를 고르면 두 사람의 자리가 바뀐다
+    function renderEditableMatch(m, b) {
+        const names = tournament.participants.filter((p) => p.group === activeGroup).map((p) => p.name);
+        const slot = (name, i) => name
+            ? `<select data-swap="${escapeHtml(name)}" aria-label="${escapeHtml(name)} 자리 바꾸기" class="select-chevron select-chevron-sm h-8 w-full rounded-md border border-zinc-200 bg-white pl-2 pr-7 text-sm font-semibold dark:border-zinc-700 dark:bg-zinc-900">
+                ${names.map((n) => `<option value="${escapeHtml(n)}" ${n === name ? 'selected' : ''}>${escapeHtml(n)} · ${escapeHtml(divisionOf(n))}</option>`).join('')}</select>`
+            : '<span class="flex h-8 items-center px-2 text-sm text-zinc-400 dark:text-zinc-500">부전승 자리</span>';
+        return `<article class="rounded-xl border-2 border-dashed border-red-300 bg-white p-2 dark:border-red-500/40 dark:bg-zinc-900">
+            <div class="mb-1 px-1 text-[11px] font-semibold text-red-600 dark:text-red-400">대진 수정 · 다른 이름을 고르면 자리가 바뀝니다</div>
+            <div class="space-y-1">${slot(m.players[0], 0)}${slot(m.players[1], 1)}</div>
+        </article>`;
+    }
+
+    // ---------- 참가자 추가 (운영진) ----------
+    let editMode = false;
+    (function setupAddPicker() {
+        const input = $('add-input'), list = $('add-list');
+        if (!input || !ROSTER.length) return;
+        const { matchName } = window.HangulSearch;
+        let options = [];
+        function open(query) {
+            const taken = new Set((tournament ? tournament.participants : []).map((p) => p.name));
+            options = ROSTER.filter((m) => !taken.has(m.이름) && (!query || matchName(m.이름, query)));
+            list.innerHTML = options.length
+                ? options.map((m, i) => `<li role="option" data-add="${i}" class="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"><span class="font-semibold">${escapeHtml(m.이름)}</span><span class="text-xs font-medium text-zinc-400 dark:text-zinc-500">${escapeHtml(m.부수 || '미지정')}</span></li>`).join('')
+                : '<li class="px-3 py-2 text-sm text-zinc-400 dark:text-zinc-500">추가할 수 있는 부원이 없습니다</li>';
+            list.hidden = false; input.setAttribute('aria-expanded', 'true');
+        }
+        const close = () => { list.hidden = true; input.setAttribute('aria-expanded', 'false'); };
+        input.addEventListener('focus', () => open(input.value.trim()));
+        input.addEventListener('input', () => open(input.value.trim()));
+        input.addEventListener('blur', close);
+        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); if (options.length === 1) add(0); } if (e.key === 'Escape') close(); });
+        list.addEventListener('mousedown', (e) => e.preventDefault());
+        list.addEventListener('click', (e) => { const item = e.target.closest('[data-add]'); if (item) add(Number(item.dataset.add)); });
+        async function add(i) {
+            const member = options[i];
+            if (!member) return;
+            const data = await act('/participants/add', { names: [member.이름] }, `${member.이름} 추가`);
+            input.value = '';
+            if (data) open('');   // 계속 추가할 수 있게 목록을 다시 연다
+        }
+    })();
+
     // ---------- 결과 입력 패널 ----------
     function openResult(match, mode) {
         pendingAction = { match, mode };
@@ -401,6 +454,7 @@
         $('result-winners').innerHTML = match.players.map((p) => `<button type="button" data-winner="${escapeHtml(p)}" aria-current="false"
             class="h-12 rounded-xl border border-zinc-200 text-sm font-bold text-zinc-700 transition-colors aria-[current=true]:border-red-600 aria-[current=true]:bg-red-600 aria-[current=true]:text-white dark:border-zinc-700 dark:text-zinc-300 dark:aria-[current=true]:border-red-500 dark:aria-[current=true]:bg-rubber">${escapeHtml(p)}</button>`).join('');
         $('result-games').value = match.report && match.report.games ? match.report.games.map(([a, c]) => `${a}:${c}`).join(', ') : '';
+        $('result-games-label').textContent = `게임 점수 (선택) · ${match.players[0]} : ${match.players[1]} 순서로, 예: 11:7, 9:11, 11:8`;
         if (match.report) $('result-winners').querySelector(`[data-winner="${CSS.escape(match.report.winner)}"]`)?.setAttribute('aria-current', 'true');
         $('result-error').hidden = true;
         $('result-submit').textContent = mode === 'confirm' ? '확정' : '보내기';
@@ -439,9 +493,11 @@
 
     // ---------- 버튼 처리 ----------
     root.addEventListener('click', async (e) => {
-        const el = e.target.closest('[data-group], [data-remove], #start-button, #copy-join, [data-report], [data-confirm], [data-confirm-report], [data-reset], [data-third], [data-sound]');
+        const el = e.target.closest('[data-group], [data-remove], #start-button, #copy-join, [data-report], [data-confirm], [data-confirm-report], [data-reset], [data-third], [data-sound], [data-edit], [data-rebuild]');
         if (!el) return;
         if (el.hasAttribute('data-sound')) { soundOn = !soundOn; storage.set('league_sound', soundOn ? 'on' : 'off'); renderPendingPanel(pendingReports(tournament)); if (soundOn) beep(); return; }
+        if (el.hasAttribute('data-edit')) { editMode = !editMode; render(); return; }
+        if (el.dataset.rebuild) { if (confirm(`${groupName(activeGroup)} 대진표를 ${el.dataset.rebuild === 'random' ? '무작위로' : '부수 시드로'} 다시 만들까요?`)) act(`/brackets/${activeGroup}/rebuild`, { seed: el.dataset.rebuild }, '대진표를 다시 만들었습니다'); return; }
         const find = (id) => Object.values(tournament.brackets).flatMap((b) => b.matches.concat(b.third ? [b.third] : [])).find((m) => m.id === id);
         if (el.dataset.third) { act('/third-place', { group: activeGroup, enabled: el.dataset.third === 'on' }, el.dataset.third === 'on' ? '3·4위전을 추가했습니다' : '3·4위전을 뺐습니다'); return; }
         if (el.dataset.group) { activeGroup = el.dataset.group; render(); }
@@ -460,6 +516,8 @@
         const select = e.target.closest('[data-move]');
         if (select) act('/participants', { name: select.dataset.move, group: select.value }, '그룹을 바꿨습니다');
         if (e.target.id === 'best-of-from') act('/settings', { best_of_from: Number(e.target.value) }, '5판 3선 전환 시점을 바꿨습니다');
+        const swap = e.target.closest('[data-swap]');
+        if (swap && swap.value !== swap.dataset.swap) act(`/brackets/${activeGroup}/swap`, { a: swap.dataset.swap, b: swap.value }, '자리를 바꿨습니다');
     });
     $('admin-login').addEventListener('submit', async (e) => {
         e.preventDefault();
