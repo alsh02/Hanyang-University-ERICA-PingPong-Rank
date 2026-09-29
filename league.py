@@ -25,7 +25,7 @@ league_bp = Blueprint("league", __name__)
 
 TOURNAMENT_SHEET = "토너먼트"
 LOG_SHEET = "토너먼트로그"
-TOURNAMENT_HEADERS = ["코드", "상태", "생성일시", "갱신일시", "상태JSON"]
+TOURNAMENT_HEADERS = ["코드", "상태", "생성일시", "갱신일시", "상태JSON", "관리자코드"]
 LOG_HEADERS = ["코드", "종류", "시각", "내용JSON"]
 
 CACHE_TTL = 3            # 참가자 화면이 몇 초마다 새로 고쳐도 시트 호출은 이 간격으로만 나간다 (인스턴스마다)
@@ -61,7 +61,9 @@ _cache = {"rows": None, "logs": None, "expires_at": 0.0}
 _writes = deque()
 _admin_logins = deque()
 _sheets_ready = False
-RANGES = [f"'{TOURNAMENT_SHEET}'!A:E", f"'{LOG_SHEET}'!A:D"]
+RANGES = [f"'{TOURNAMENT_SHEET}'!A:F", f"'{LOG_SHEET}'!A:D"]
+ROOM_LIST_LIMIT = 30      # 참가 화면에 보여 주는 방 수
+FINISHED_ROOM_DAYS = 2    # 끝난 방은 이틀까지만 목록에 남긴다
 
 
 class LeagueError(Exception):
@@ -142,13 +144,14 @@ _WRITE_PARAMS = {"valueInputOption": "RAW"}
 def save_state(state):
     # 운영진의 변경을 방 행에 한 번의 호출로 다시 쓴다 (행 번호는 읽을 때 기억해 둔 것)
     state["updated_at"] = kst_now()
-    values = [state["code"], state["status"], state["created_at"], state["updated_at"], json.dumps(persistable(state), ensure_ascii=False)]
+    values = [state["code"], state["status"], state["created_at"], state["updated_at"],
+              json.dumps(persistable(state), ensure_ascii=False), state.get("admin_code", "")]
     row_no = state.get("_row_no")
     if row_no is None:
         _ensure_sheets()
         _spreadsheet().values_append(RANGES[0], {**_WRITE_PARAMS, "insertDataOption": "INSERT_ROWS"}, {"values": [values]})
     else:
-        _spreadsheet().values_update(f"'{TOURNAMENT_SHEET}'!A{row_no}:E{row_no}", _WRITE_PARAMS, {"values": [values]})
+        _spreadsheet().values_update(f"'{TOURNAMENT_SHEET}'!A{row_no}:F{row_no}", _WRITE_PARAMS, {"values": [values]})
     _invalidate()
 
 
@@ -243,6 +246,43 @@ def apply_groups(state):
         override = state.get("group_overrides", {}).get(p["name"])
         p["group"] = override or auto_group
         p["group_undecided"] = not decided and not override
+
+
+def list_rooms():
+    # 참가 화면의 방 목록: 이름·상태·참가 인원만 내보낸다. 코드는 참가가 끝난(진행 중·종료) 방만 — 접수 중인 방의 코드는 입장 암호다.
+    rows, logs = _read_all()
+    joined, removed_cache = {}, {}
+    for l in logs[1:]:
+        if len(l) >= 4 and l[1] == "참가":
+            try:
+                name = json.loads(l[3]).get("name", "")
+            except ValueError:
+                continue
+            joined.setdefault(l[0].strip(), set()).add(name)
+    rooms = []
+    for row in rows[1:]:
+        if len(row) < 5 or not row[4]:
+            continue
+        try:
+            state = json.loads(row[4])
+        except ValueError:
+            continue
+        if state.get("status") == "finished":
+            try:
+                finished = datetime.strptime(state.get("finished_at", state["updated_at"]), "%Y-%m-%d %H:%M:%S")
+                if (datetime.now(_deps["kst"]).replace(tzinfo=None) - finished).days >= FINISHED_ROOM_DAYS:
+                    continue
+            except (ValueError, KeyError):
+                continue
+        count = len(joined.get(state["code"], set()) - set(state.get("removed", [])))
+        rooms.append({
+            "name": state["name"], "status": state["status"], "status_label": STATUS_LABELS.get(state["status"], state["status"]),
+            "participants": count, "created_at": state["created_at"][:16],
+            "groups": [g["name"] for g in state.get("groups", [])],
+            "code": state["code"] if state["status"] != "lobby" else None,
+        })
+    rooms.sort(key=lambda r: r["created_at"], reverse=True)
+    return rooms[:ROOM_LIST_LIMIT]
 
 
 def public_view(state):
@@ -518,8 +558,18 @@ def league_new():
 @league_bp.route("/league/join")
 def league_join():
     members, is_dummy = _members()
+    try:
+        rooms = [] if is_dummy else list_rooms()
+    except Exception as e:  # 목록을 못 읽어도 코드 입력으로는 참가할 수 있어야 한다
+        _deps["logger"].error("토너먼트 목록 조회 실패: %s", e)
+        rooms = []
     return render_template("league/join.html", members=sorted(members.values(), key=_deps["member_sort_key"]),
-                           code=normalize_code(request.args.get("code", "")), is_dummy=is_dummy)
+                           code=normalize_code(request.args.get("code", "")), rooms=rooms, is_dummy=is_dummy)
+
+
+@league_bp.route("/api/league")
+def api_rooms():
+    return jsonify({"rooms": list_rooms()})
 
 
 @league_bp.route("/league/admin")
@@ -668,7 +718,11 @@ def api_join(code):
         raise LeagueError("참가 접수가 끝난 토너먼트입니다.")
     _check_write_limit()
     members, _ = _members()
-    name = _deps["normalize_name"]((request.get_json(silent=True) or {}).get("name", ""))
+    data = request.get_json(silent=True) or {}
+    room = str(data.get("room", "")).strip()
+    if room and room != state["name"]:
+        raise LeagueError(f"입력한 코드는 '{state['name']}' 방의 코드입니다. '{room}' 방의 코드를 다시 확인해 주세요.")
+    name = _deps["normalize_name"](data.get("name", ""))
     if name not in members:
         raise LeagueError("명단에 없는 이름입니다. 부수표에 등록된 이름을 골라 주세요.")
     if name in state["removed"]:

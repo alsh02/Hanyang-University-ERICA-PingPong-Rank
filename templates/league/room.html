@@ -176,7 +176,7 @@
         if (canAdmin && adminCode) $('admin-code').textContent = adminCode;
         $('admin-login').hidden = !(isAdmin && !adminKey);
         $('admin-hint').hidden = isAdmin || t.status === 'lobby';
-        if (isAdmin && !adminKey) showNotice('이 기기에는 운영 권한이 없습니다. 개설한 운영진에게 받은 관리자 코드를 넣어 주세요.');
+        if (isAdmin && !adminKey) showNotice('이 기기에는 운영 권한이 없습니다. 관리자 코드를 넣어 주세요. 코드는 개설한 운영진 화면 상단에 있고, 잃어버렸으면 경기 기록 구글 시트의 \'토너먼트\' 탭에서 볼 수 있습니다.');
         else if (!isAdmin && !me && t.status === 'lobby') showNotice('아직 참가하지 않았습니다. 참가 페이지에서 코드를 넣고 이름을 고르세요.');
         else showNotice('');
 
