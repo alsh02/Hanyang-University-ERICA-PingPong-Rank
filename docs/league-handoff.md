@@ -115,6 +115,7 @@ flowchart TD
 * 시트 `토너먼트` 열: `코드, 상태, 생성일시, 갱신일시, 상태JSON, 관리자코드`. 방 하나 = 한 행. 운영 기록을 적용한 **스냅숏**이고, 적용한 운영 기록 id를 `applied`에 모아 둔다.
   방을 지워도 행은 남기고 내용만 비운다(`상태=삭제`) — 행이 밀리면 다른 방의 저장이 엉뚱한 행을 덮기 때문.
 * **동시 저장 보호**(2026-09-30): 운영진 요청은 `load_state(force)` → `apply_op`로 지금 상태에 적용해 보고(안 되면 400, 아무것도 안 씀) → `commit_op`가 운영 기록을 로그에 덧붙이고(**이 순간 확정**) 스냅숏 행을 고친다. 스냅숏 저장이 실패해도 요청은 성공으로 끝난다(기록이 로그에 있으므로).
+  읽기와 로그 덧붙이기는 구글이 잠깐 거절하면(429·5xx) 1~2초 뒤 한 번 다시 한다(`_retrying`). 같은 줄이 두 번 들어가도 운영 기록은 id로, 참가는 이름으로 한 번만 세고 보고는 경기별 마지막 것만 쓰므로 괜찮다(방 개설은 두 번 들어가면 방이 둘이 되므로 다시 하지 않는다).
   덧붙이기는 반드시 `values.append` + `insertDataOption: INSERT_ROWS`로 한다 — 동시에 와도 건마다 새 행이 끼워진다(프리뷰에서 참가 16건 동시 확인). batchUpdate의 `appendCells`는 동시에 오면 같은 행에 써서 한쪽이 **사라진다**(프리뷰에서 8건 동시에 보내 2~5건 유실 확인) — 쓰지 말 것.
   두 운영진이 거의 동시에 저장하면 나중 스냅숏이 앞 스냅숏을 덮지만, 읽을 때 `assemble()`이 스냅숏의 `applied`에 없는 운영 기록을 로그 순서대로 다시 적용해 되살린다(지금 상태와 맞지 않는 기록 — 같은 경기를 둘이 확정 등 — 은 건너뜀).
   무작위 배치는 운영 기록 id를 씨앗으로 써서(`random.Random(id)`) 어느 인스턴스에서 다시 적용해도 같은 대진이 나오고, 동시에 추가된 참가자는 되살릴 때 함께 들어간다.
@@ -225,13 +226,14 @@ node check.js                                 # 기존 기능 회귀 29건 (새 
 ./venv/bin/python league-api-test.py          # API 흐름 94건
 node league-ui-test.js                        # 브라우저(퍼펫티어, 시스템 크롬) 54건: 운영진 2대 + 폰 4~5대
 ./venv/bin/python league-calls-test.py        # 요청당 시트 호출 수(새로 고침 1 · 참가 2 · 운영진 변경 3 이하)
+./venv/bin/python retry-test.py               # 시트가 잠깐 503일 때 한 번 다시 시도, 같은 줄이 두 번 들어가도 한 번만 적용 7건
 BASE=http://127.0.0.1:5003 ./venv/bin/python league-race-test.py   # 동시 요청 16~17건(동시 추가·확정·이동·보고, 시작과 참가 경합)
 node unplaced-ui.js                           # 대진표 밖 참가자 알림·넣기, 지연 서버에서 빠르게 연속 추가 7건
 node legacy-ui.js                             # 프리뷰 '테스트1' 데이터(예전 대진표 + 18명 누락)를 넣고 화면에서 복구 4건
 node tree-shot.js / touch-drag.js / bulk-add.js / viewer-shot.js   # 개별 화면 캡처·확인, 결과는 shots/ (touch-drag는 화면 밖 빈 자리로 자동 스크롤해 놓기)
 ```
 
-다시 만들 때: `/Users/alsh02/miniconda3/bin/python3 -m venv venv && ./venv/bin/pip install flask gspread google-auth`, `npm i puppeteer-core`. `fake_server.py`는 `sys.path`에 저장소 경로를 넣고 `app`을 import한 뒤 gspread를 가짜 클라이언트(부원 30명·경기기록·토너먼트 시트, 실제처럼 동시에 오면 행을 덮는 batchUpdate appendCells, 호출 수 카운터 `/__fake/calls`, 시트 내용 보기 `/__fake/league`, 줄 직접 넣기 `POST /__fake/league/append`)로 바꾼다. 시스템 python3.14의 venv는 pip이 깨져 있으니 miniconda 파이썬을 쓴다.
+다시 만들 때: `/Users/alsh02/miniconda3/bin/python3 -m venv venv && ./venv/bin/pip install flask gspread google-auth`, `npm i puppeteer-core`. `fake_server.py`는 `sys.path`에 저장소 경로를 넣고 `app`을 import한 뒤 gspread를 가짜 클라이언트(부원 30명·경기기록·토너먼트 시트, 실제처럼 동시에 오면 행을 덮는 batchUpdate appendCells, 호출 수 카운터 `/__fake/calls`, 시트 내용 보기 `/__fake/league`, 줄 직접 넣기 `POST /__fake/league/append`, 다음 호출 실패시키기 `POST /__fake/fail {method, status, when: before|after}`)로 바꾼다. 시스템 python3.14의 venv는 pip이 깨져 있으니 miniconda 파이썬을 쓴다.
 
 ## 9. 주의사항
 

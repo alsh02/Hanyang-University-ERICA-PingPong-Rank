@@ -94,6 +94,23 @@ def _ensure_sheets():
     _sheets_ready = True
 
 
+RETRY_STATUSES = (429, 500, 502, 503, 504)
+
+
+def _retrying(call):
+    # 구글 시트가 잠깐 거절하면(동시 쓰기가 몰렸거나 순간 한도) 한 번만 조금 기다렸다 다시 한다.
+    # 로그 줄은 두 번 들어가도 괜찮다 — 운영 기록은 id로, 참가는 이름으로 한 번만 세고, 보고는 경기별 마지막 것만 쓴다.
+    import gspread
+
+    try:
+        return call()
+    except gspread.exceptions.APIError as e:
+        if getattr(getattr(e, "response", None), "status_code", None) not in RETRY_STATUSES:
+            raise
+        time.sleep(1 + random.random())   # 동시에 실패한 요청들이 같은 순간에 다시 몰리지 않게
+        return call()
+
+
 def _read_all(force=False):
     # 두 시트를 API 호출 한 번(values_batch_get)으로 읽어 잠깐 캐시한다.
     # 구글 시트 읽기 한도가 사용자당 분당 60회라, 참가자 폰이 몇 초마다 새로 고쳐도 인스턴스당 호출은 CACHE_TTL마다 한 번이다.
@@ -101,7 +118,7 @@ def _read_all(force=False):
         now = time.monotonic()
         if force or now >= _cache["expires_at"] or _cache["rows"] is None:
             _ensure_sheets()
-            ranges = _spreadsheet().values_batch_get(RANGES).get("valueRanges", [])
+            ranges = _retrying(lambda: _spreadsheet().values_batch_get(RANGES)).get("valueRanges", [])
             _cache["rows"] = ranges[0].get("values", []) if len(ranges) > 0 else []
             _cache["logs"] = ranges[1].get("values", []) if len(ranges) > 1 else []
             _cache["expires_at"] = now + CACHE_TTL
@@ -180,8 +197,8 @@ def append_logs(state, entries):
     # entries: [(종류, 내용)]. 여러 줄도 호출 한 번으로 덧붙인다 — 한 번의 호출은 통째로 들어가거나 통째로 실패한다.
     _ensure_sheets()
     now = kst_now()
-    _spreadsheet().values_append(RANGES[1], {**_WRITE_PARAMS, "insertDataOption": "INSERT_ROWS"},
-                                 {"values": [[state["code"], kind, now, json.dumps(p, ensure_ascii=False)] for kind, p in entries]})
+    values = [[state["code"], kind, now, json.dumps(p, ensure_ascii=False)] for kind, p in entries]
+    _retrying(lambda: _spreadsheet().values_append(RANGES[1], {**_WRITE_PARAMS, "insertDataOption": "INSERT_ROWS"}, {"values": values}))
     _invalidate()
     state["rev"] = state.get("rev", 0) + len(entries)
     return now
