@@ -398,8 +398,8 @@ def list_rooms():
             "name": state["name"], "status": state["status"], "status_label": STATUS_LABELS.get(state["status"], state["status"]),
             "participants": len(state["participants"]), "created_at": state["created_at"][:16],
             "groups": [g["name"] for g in state.get("groups", [])],
-            # 코드는 어떤 상태에서도 내보내지 않는다. 진행 중·종료 방은 보기 전용 키로 대진표를 연다.
-            "view": view_key(state) if state["status"] not in OPEN_STATUSES and state.get("admin_key") else None,
+            # 코드는 어떤 상태에서도 내보내지 않는다. 대진표(접수 중이면 참가자 목록)는 보기 전용 키로 연다.
+            "view": view_key(state) if state.get("admin_key") else None,
         })
     rooms.sort(key=lambda r: r["created_at"], reverse=True)
     return rooms[:ROOM_LIST_LIMIT]
@@ -427,7 +427,7 @@ def load_state_by_view(view, force=False):
 
 
 def viewer_view(state):
-    # 보기 전용 화면에는 참가 코드도 보내지 않는다 (코드는 입장 암호이자 관리자 로그인의 절반이다)
+    # 보기 전용 화면에는 참가 코드도 보내지 않는다 (코드는 입장 암호다)
     view = public_view(state)
     view.pop("code", None)
     return view

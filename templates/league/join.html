@@ -10,7 +10,7 @@
     <h1 class="text-2xl font-extrabold tracking-tight sm:text-3xl">
         토너먼트 <span class="text-red-600 dark:text-red-400">참가</span>
     </h1>
-    <p class="mt-2 max-w-md break-keep text-sm leading-relaxed text-zinc-500 [text-wrap:balance] dark:text-zinc-400">열려 있는 방을 고르고, 운영진이 알려준 참가 코드를 넣은 뒤 명단에서 내 이름을 고르세요.</p>
+    <p class="mt-2 max-w-md break-keep text-sm leading-relaxed text-zinc-500 [text-wrap:balance] dark:text-zinc-400">참가할 토너먼트에서 참가하기를 누르고, 내 이름과 운영진이 알려준 참가 코드를 넣으세요.</p>
     <span class="mt-3 h-1 w-10 rounded-full bg-red-600 dark:bg-rubber"></span>
 </div>
 
@@ -20,6 +20,7 @@
 </div>
 {% endif %}
 
+{% set half_button = 'inline-flex h-10 items-center justify-center gap-1.5 rounded-lg px-3 text-sm font-semibold transition-colors' %}
 <section class="mx-auto mb-6 max-w-xl">
     <div class="mb-2 flex items-baseline justify-between">
         <h2 class="text-sm font-bold">열려 있는 토너먼트</h2>
@@ -28,55 +29,72 @@
     {% if rooms %}
     <ul id="room-list" class="space-y-2">
         {% for room in rooms %}
-        <li>
-            {% if room.status in ('lobby', 'draft') %}
-            <button type="button" data-room="{{ room.name }}" aria-pressed="false"
-                    class="flex w-full items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-3 text-left transition-colors hover:border-red-400 aria-[pressed=true]:border-red-600 aria-[pressed=true]:ring-2 aria-[pressed=true]:ring-red-500/30 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-red-500 dark:aria-[pressed=true]:border-red-500">
-                <span class="min-w-0">
-                    <span class="block truncate text-sm font-bold">{{ room.name }}</span>
-                    <span class="mt-0.5 block text-xs text-zinc-500 dark:text-zinc-400">{{ room.status_label }} · {{ room.participants }}명 · {{ room.groups | join('·') }} · {{ room.created_at[5:] }}</span>
-                </span>
-                <span class="flex-shrink-0 rounded-lg bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700 dark:bg-red-500/10 dark:text-red-300">코드로 입장</span>
-            </button>
-            {% else %}
-            <a href="{{ url_for('league.league_view', view=room.view) }}"
-               class="flex w-full items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-3 transition-colors hover:border-red-400 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-red-500">
-                <span class="min-w-0">
-                    <span class="block truncate text-sm font-bold">{{ room.name }}</span>
-                    <span class="mt-0.5 block text-xs text-zinc-500 dark:text-zinc-400">{{ room.status_label }} · {{ room.participants }}명 · {{ room.created_at[5:] }}</span>
-                </span>
-                <span class="flex-shrink-0 text-xs font-semibold text-zinc-500 dark:text-zinc-400">대진표 보기</span>
-            </a>
-            {% endif %}
+        <li class="rounded-xl border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900">
+            <p class="truncate text-sm font-bold">{{ room.name }}</p>
+            <p class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">{{ room.status_label }} · {{ room.participants }}명 · {{ room.groups | join('·') }} · {{ room.created_at[5:] }}</p>
+            <!-- 두 버튼은 같은 크기로 카드 폭을 반씩. 대진표(접수 중이면 참가자 목록)는 보기 전용 주소라 참가 코드가 드러나지 않는다. -->
+            <div class="mt-3 grid grid-cols-2 gap-2">
+                {% if room.view %}
+                <a href="{{ url_for('league.league_view', view=room.view) }}"
+                   class="{{ half_button }} border border-zinc-200 bg-white text-zinc-700 hover:border-red-400 hover:text-red-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-red-500 dark:hover:text-red-300">
+                    <i data-lucide="network" class="h-4 w-4 flex-shrink-0"></i>대진표 보기
+                </a>
+                {% else %}
+                <span class="{{ half_button }} border border-dashed border-zinc-200 text-zinc-400 dark:border-zinc-800 dark:text-zinc-600">대진표 보기 없음</span>
+                {% endif %}
+                <button type="button" data-join="{{ room.name }}" data-status="{{ room.status }}"
+                        class="{{ half_button }} bg-red-600 text-white hover:bg-red-700 dark:bg-rubber dark:hover:bg-red-500">
+                    <i data-lucide="log-in" class="h-4 w-4 flex-shrink-0"></i>참가하기
+                </button>
+            </div>
         </li>
         {% endfor %}
     </ul>
     {% else %}
-    <p class="rounded-xl border border-dashed border-zinc-300 px-4 py-6 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">지금 열려 있는 토너먼트가 없습니다. 운영진이 방을 열면 여기에 나타납니다.</p>
+    <p class="rounded-xl border border-dashed border-zinc-300 px-4 py-6 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+        지금 열려 있는 토너먼트가 없습니다. 운영진이 방을 열면 여기에 나타납니다.<br>
+        <button type="button" id="join-by-code" class="mt-2 font-semibold text-zinc-700 underline underline-offset-2 hover:text-red-600 dark:text-zinc-300 dark:hover:text-red-400">참가 코드로 입장</button>
+    </p>
     {% endif %}
 </section>
 
-{% set input_class = 'h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-900 placeholder-zinc-400 focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/30 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder-zinc-500' %}
-<form id="join-form" class="mx-auto max-w-xl space-y-5" autocomplete="off">
-    <div>
-        <label for="code" class="mb-1.5 block text-xs font-semibold text-zinc-500 dark:text-zinc-400">참가 코드 <span id="room-picked" class="ml-1 font-medium text-red-600 dark:text-red-400"></span></label>
-        <input id="code" name="code" type="text" inputmode="numeric" pattern="[0-9]*" value="{{ code }}" maxlength="6" placeholder="6자리 숫자" spellcheck="false"
-               class="{{ input_class }} text-center font-mono text-lg tracking-[0.3em] placeholder:font-sans placeholder:text-sm placeholder:tracking-normal">
-    </div>
-    <div class="relative">
-        <label for="name-input" class="mb-1.5 block text-xs font-semibold text-zinc-500 dark:text-zinc-400">내 이름</label>
-        <input id="name-input" type="text" role="combobox" aria-expanded="false" aria-controls="name-list" aria-autocomplete="list"
-               autocapitalize="off" spellcheck="false" placeholder="이름 또는 초성" class="{{ input_class }}">
-        <ul id="name-list" role="listbox" hidden aria-label="참가자 후보"
-            class="absolute left-0 right-0 top-full z-30 mt-1 max-h-60 overflow-y-auto overscroll-contain rounded-xl border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"></ul>
-        <p id="name-picked" hidden class="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400"></p>
-    </div>
-    <button type="submit" id="join-button" disabled class="h-12 w-full rounded-xl bg-red-600 text-base font-bold text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:bg-rubber dark:hover:bg-red-500 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500">
-        참가하기
-    </button>
-    <p id="join-error" hidden class="text-center text-sm font-semibold text-amber-600 dark:text-amber-400"></p>
-</form>
+<!-- 참가 상자: 1/2 이름 → 2/2 참가 코드 → 입장 -->
+{% set input_class = 'h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-900 placeholder-zinc-400 focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/30 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:placeholder-zinc-500' %}
+<div id="join-panel" hidden class="fixed inset-0 z-50 flex items-end justify-center bg-zinc-900/50 p-4 sm:items-center">
+    <form id="join-form" class="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-5 shadow-xl dark:border-zinc-800 dark:bg-zinc-900" autocomplete="off">
+        <p class="flex items-baseline justify-between gap-3 text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+            <span id="join-room" class="truncate"></span><span id="join-step" class="flex-shrink-0 tabular-nums"></span>
+        </p>
+        <p id="join-note" hidden class="mt-1 break-keep text-xs font-medium text-amber-700 dark:text-amber-300"></p>
 
+        <div id="step-name">
+            <label for="name-input" class="mb-3 mt-1 block text-base font-bold">내 이름을 고르세요</label>
+            <input id="name-input" type="text" role="combobox" aria-expanded="false" aria-controls="name-list" aria-autocomplete="list"
+                   autocapitalize="off" spellcheck="false" placeholder="이름 또는 초성" class="{{ input_class }}">
+            <!-- 상자 안에서 겹쳐 펼치면 폰 화면 밖으로 나가므로 목록은 입력칸 바로 아래에 붙여 둔다 -->
+            <ul id="name-list" role="listbox" hidden aria-label="참가자 후보"
+                class="mt-1 max-h-56 overflow-y-auto overscroll-contain rounded-xl border border-zinc-200 py-1 dark:border-zinc-700"></ul>
+            <p id="name-picked" hidden class="mt-2 text-sm text-zinc-500 dark:text-zinc-400"></p>
+            <div class="mt-4 grid grid-cols-2 gap-2">
+                <button type="button" data-close class="h-11 rounded-xl border border-zinc-200 text-sm font-semibold text-zinc-700 dark:border-zinc-700 dark:text-zinc-300">취소</button>
+                <button type="button" id="next-button" disabled class="h-11 rounded-xl bg-red-600 text-sm font-bold text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:bg-rubber dark:hover:bg-red-500 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500">다음</button>
+            </div>
+        </div>
+
+        <div id="step-code" hidden>
+            <label for="code" class="mb-1 mt-1 block text-base font-bold">참가 코드를 넣으세요</label>
+            <p id="code-for" class="mb-3 text-sm text-zinc-500 dark:text-zinc-400"></p>
+            <input id="code" name="code" type="text" inputmode="numeric" pattern="[0-9]*" value="{{ code }}" maxlength="6" placeholder="운영진이 알려준 6자리" spellcheck="false"
+                   class="{{ input_class }} text-center font-mono text-lg tracking-[0.3em] placeholder:font-sans placeholder:text-sm placeholder:tracking-normal">
+            <div class="mt-4 grid grid-cols-2 gap-2">
+                <button type="button" id="back-button" class="h-11 rounded-xl border border-zinc-200 text-sm font-semibold text-zinc-700 dark:border-zinc-700 dark:text-zinc-300">이전</button>
+                <button type="submit" id="join-button" disabled class="h-11 rounded-xl bg-red-600 text-sm font-bold text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:bg-rubber dark:hover:bg-red-500 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500">입장</button>
+            </div>
+        </div>
+
+        <p id="join-error" hidden class="mt-3 break-keep text-center text-sm font-semibold text-amber-600 dark:text-amber-400"></p>
+    </form>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -85,42 +103,47 @@
 (() => {
     const MEMBERS = {{ members | tojson }};
     const { matchName } = window.HangulSearch;
+    const $ = (id) => document.getElementById(id);
     const escapeHtml = (text) => text.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
-    const codeInput = document.getElementById('code'), input = document.getElementById('name-input'), list = document.getElementById('name-list');
-    const button = document.getElementById('join-button'), error = document.getElementById('join-error'), picked = document.getElementById('name-picked');
-    let chosen = null, options = [];
+    const panel = $('join-panel'), input = $('name-input'), list = $('name-list'), codeInput = $('code'), error = $('join-error');
+    let room = '', chosen = null, options = [];   // room: 고른 방 이름 (보낼 때 함께 보내 다른 방의 코드를 걸러 낸다)
 
-    codeInput.addEventListener('input', () => { codeInput.value = codeInput.value.replace(/[^0-9]/g, '').slice(0, 6); sync(); lookUp(); });
-
-    // 코드 6자리가 채워지면(QR로 열었거나 직접 친 경우) 어느 방인지 이름을 보여 준다
-    let lookedUp = '';
-    async function lookUp() {
-        const code = codeInput.value;
-        if (code.length !== 6 || code === lookedUp || room) return;
-        lookedUp = code;
-        const label = document.getElementById('room-picked');
-        try {
-            const response = await fetch(`/api/league/${code}`);
-            const data = await response.json().catch(() => ({}));
-            if (codeInput.value !== code || room) return;
-            if (!response.ok) { label.textContent = '· 그 코드의 방이 없습니다'; return; }
-            const t = data.tournament;
-            label.textContent = ['lobby', 'draft'].includes(t.status) ? `· '${t.name}' 방` : `· '${t.name}' 방 · 이미 참가한 사람만 다시 연결할 수 있습니다`;
-        } catch (e) { lookedUp = ''; }
+    // ---------- 상자 열기 · 단계 ----------
+    function openPanel(roomName, status, keepCode) {
+        if (!keepCode && (roomName || '') !== room) codeInput.value = '';   // 다른 방으로 바꾸면 앞 방의 코드는 지운다 (이름은 같은 사람이니 둔다)
+        room = roomName || '';
+        $('join-room').textContent = room ? `'${room}' 참가` : '참가 코드로 입장';
+        // 진행 중·종료 방은 새로 참가할 수 없고, 이미 참가한 사람이 이 기기로 다시 연결만 된다
+        const closed = !!status && !['lobby', 'draft'].includes(status);
+        $('join-note').hidden = !closed;
+        $('join-note').textContent = closed ? '진행 중인 토너먼트는 이미 참가한 사람만 이 기기로 다시 연결할 수 있습니다.' : '';
+        error.hidden = true;
+        panel.hidden = false;
+        showStep('name');
     }
-
-    // 목록에서 방을 고르면 그 방의 코드를 넣도록 안내하고, 보낼 때 방 이름도 함께 보내 다른 방 코드를 걸러 낸다
-    let room = null;
-    document.getElementById('room-list')?.addEventListener('click', (event) => {
-        const item = event.target.closest('[data-room]');
-        if (!item) return;
-        room = item.getAttribute('aria-pressed') === 'true' ? null : item.dataset.room;
-        lookedUp = '';
-        document.querySelectorAll('[data-room]').forEach((el) => el.setAttribute('aria-pressed', String(el.dataset.room === room)));
-        document.getElementById('room-picked').textContent = room ? `· '${room}' 방의 코드` : '';
-        if (room) { codeInput.focus(); codeInput.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+    function showStep(which) {
+        $('step-name').hidden = which !== 'name';
+        $('step-code').hidden = which !== 'code';
+        $('join-step').textContent = which === 'name' ? '1/2 이름' : '2/2 참가 코드';
+        if (which === 'name') { if (!chosen) input.focus(); }
+        else {
+            $('code-for').textContent = `${chosen.이름} · ${chosen.부수 || '부수 미지정'}으로 참가합니다`;
+            codeInput.focus();
+        }
+        sync();
+    }
+    function closePanel() { panel.hidden = true; close(); }
+    panel.addEventListener('click', (event) => { if (event.target === panel || event.target.closest('[data-close]')) closePanel(); });
+    document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !panel.hidden) closePanel(); });
+    $('room-list')?.addEventListener('click', (event) => {
+        const item = event.target.closest('[data-join]');
+        if (item) openPanel(item.dataset.join, item.dataset.status);
     });
+    $('join-by-code')?.addEventListener('click', () => openPanel('', ''));
+    $('next-button').addEventListener('click', () => { if (chosen) showStep('code'); });
+    $('back-button').addEventListener('click', () => { error.hidden = true; showStep('name'); });
 
+    // ---------- 1/2 이름 ----------
     function open(query) {
         options = MEMBERS.filter((m) => !query || matchName(m.이름, query));
         list.innerHTML = options.length
@@ -131,27 +154,35 @@
     }
     function close() { list.hidden = true; input.setAttribute('aria-expanded', 'false'); }
     function sync() {
-        button.disabled = !(chosen && codeInput.value.length === 6);
-        picked.hidden = !chosen;
-        if (chosen) picked.textContent = `${chosen.이름} · ${chosen.부수 || '부수 미지정'}으로 참가합니다`;
+        $('next-button').disabled = !chosen;
+        $('join-button').disabled = !(chosen && codeInput.value.length === 6);
+        $('name-picked').hidden = !chosen;
+        if (chosen) $('name-picked').textContent = `${chosen.이름} · ${chosen.부수 || '부수 미지정'}`;
     }
     input.addEventListener('focus', () => { input.select(); open(''); });
     input.addEventListener('input', () => { if (chosen && input.value !== chosen.이름) { chosen = null; sync(); } open(input.value.trim()); });
     input.addEventListener('blur', () => { input.value = chosen ? chosen.이름 : ''; close(); });
-    input.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); if (options.length === 1) choose(0); } });
+    input.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        if (options.length === 1) choose(0);
+        else if (chosen) showStep('code');
+    });
     list.addEventListener('mousedown', (event) => event.preventDefault());
     list.addEventListener('click', (event) => { const item = event.target.closest('[data-index]'); if (item) choose(Number(item.dataset.index)); });
     function choose(i) { chosen = options[i]; input.value = chosen.이름; close(); input.blur(); sync(); }
 
+    // ---------- 2/2 참가 코드 → 입장 ----------
+    codeInput.addEventListener('input', () => { codeInput.value = codeInput.value.replace(/[^0-9]/g, '').slice(0, 6); sync(); });
     // 참가를 보낸다. 이미 다른 기기로 참가한 이름이면 서버가 409(can_reconnect)로 알려 주고, 본인이 확인하면 이 기기로 다시 연결한다.
     async function sendJoin(code, reconnect) {
-        const response = await fetch(`/api/league/${code}/join`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: chosen.이름, room: room || '', reconnect }) });
+        const response = await fetch(`/api/league/${code}/join`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: chosen.이름, room, reconnect }) });
         return { response, data: await response.json().catch(() => ({})) };
     }
-    document.getElementById('join-form').addEventListener('submit', async (event) => {
+    $('join-form').addEventListener('submit', async (event) => {
         event.preventDefault();
-        if (!chosen) return;
-        button.disabled = true;
+        if (!chosen || codeInput.value.length !== 6) return;
+        $('join-button').disabled = true;
         error.hidden = true;
         let hideBusy = Busy.show('토너먼트 참가 중입니다');
         const code = codeInput.value;
@@ -169,7 +200,7 @@
                 localStorage.setItem(`league_token_${code}`, JSON.stringify({ name: data.name, token: data.token }));
                 localStorage.setItem('league_last', JSON.stringify({ code, url }));
             } catch (e) {}
-            location.href = url;
+            location.href = url;   // 상자는 방 화면이 뜰 때까지 둔다
         } catch (e) {
             hideBusy();
             error.textContent = e.message;
@@ -177,15 +208,17 @@
             sync();
         }
     });
-    // 방 화면의 '다시 연결'로 왔으면 이름이 주소에 실려 온다
+
+    // ---------- QR·'다시 연결' 링크로 온 경우: 그 방의 상자를 바로 연다 (코드, 이름이 있으면 채워 둔다) ----------
     const presetName = new URLSearchParams(location.search).get('name');
     const preset = presetName && MEMBERS.find((m) => m.이름 === presetName);
     if (preset) { chosen = preset; input.value = preset.이름; }
     sync();
     if (codeInput.value.length === 6) {
-        // QR로 들어오면 코드가 채워져 있으니 이름 칸이 보이게 내려 준다
-        lookUp();
-        input.scrollIntoView({ block: 'center' });
+        fetch(`/api/league/${codeInput.value}`).then((r) => r.json().then((d) => [r.ok, d])).then(([ok, d]) => {
+            if (ok) openPanel(d.tournament.name, d.tournament.status, true);
+            else { openPanel('', '', true); error.textContent = d.error || '그 코드의 토너먼트가 없습니다.'; error.hidden = false; }
+        }).catch(() => openPanel('', '', true));
     }
 })();
 </script>
