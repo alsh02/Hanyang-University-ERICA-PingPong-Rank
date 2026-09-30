@@ -160,6 +160,47 @@
     </footer>
     {% endif %}
 
+    <!-- 서버 응답을 기다리는 동안 화면 가운데에 띄우는 안내 상자 (모든 화면이 함께 쓴다: window.Busy) -->
+    <div id="busy" hidden role="status" aria-live="polite" class="fixed inset-0 z-[80] flex items-center justify-center bg-zinc-900/50 p-4">
+        <div class="flex w-full max-w-xs flex-col items-center gap-4 rounded-2xl border border-zinc-200 bg-white px-6 py-8 text-center shadow-xl dark:border-zinc-800 dark:bg-zinc-900">
+            <svg class="h-10 w-10 animate-spin text-red-600 dark:text-red-400" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="3" class="opacity-20"/>
+                <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+            </svg>
+            <p id="busy-title" class="break-keep text-base font-bold"></p>
+            <p id="busy-sub" class="break-keep text-xs text-zinc-500 dark:text-zinc-400"></p>
+        </div>
+    </div>
+    <script>
+        // Busy.show('…하는 중입니다') 는 상자를 띄우고, 돌려받은 함수를 부르면 닫는다.
+        // delay(ms)를 주면 응답이 그보다 늦을 때만 띄운다 — 금방 끝나는 작은 동작에서 상자가 번쩍이지 않게.
+        // 페이지를 옮기면(location.href) 닫지 않고 둔다. 다음 화면이 뜰 때까지 기다리는 중이기 때문이다.
+        window.Busy = (() => {
+            const box = document.getElementById('busy');
+            const open = [];   // 떠 있는 요청들 (나중 것의 문구를 보여 준다)
+            const paint = () => {
+                const top = open[open.length - 1];
+                box.hidden = !top;
+                if (top) {
+                    document.getElementById('busy-title').textContent = top.title;
+                    document.getElementById('busy-sub').textContent = top.sub;
+                }
+            };
+            function show(title, { sub = '잠시만 기다려 주세요', delay = 0 } = {}) {
+                const entry = { title, sub };
+                const add = () => { open.push(entry); paint(); };
+                const timer = delay ? setTimeout(add, delay) : (add(), null);
+                return () => {
+                    clearTimeout(timer);
+                    const i = open.indexOf(entry);
+                    if (i >= 0) open.splice(i, 1);
+                    paint();
+                };
+            }
+            return { show };
+        })();
+    </script>
+
     {% block scripts %}{% endblock %}
 
     <script>

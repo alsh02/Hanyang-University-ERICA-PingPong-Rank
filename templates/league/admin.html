@@ -37,6 +37,7 @@
     document.getElementById('admin-form').addEventListener('submit', async (event) => {
         event.preventDefault();
         button.disabled = true; error.hidden = true;
+        const hideBusy = Busy.show('운영 화면을 여는 중입니다');
         try {
             const response = await fetch('/api/league/admin-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ admin_code: adminCode.value }) });
             const data = await response.json();
@@ -47,7 +48,7 @@
                 localStorage.setItem('league_last', JSON.stringify({ code: data.code, url: data.admin_url }));
             } catch (e) {}
             location.href = data.admin_url;
-        } catch (e) { error.textContent = e.message; error.hidden = false; button.disabled = false; }
+        } catch (e) { hideBusy(); error.textContent = e.message; error.hidden = false; button.disabled = false; }
     });
 })();
 </script>

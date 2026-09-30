@@ -535,7 +535,10 @@
         if (match.status !== 'pending') showToast('이미 결과가 확정된 경기입니다');
         syncSetup();
     }
-    if (LEAGUE) loadLeagueMatch().catch((e) => showToast(e.message));
+    if (LEAGUE) {
+        const hideBusy = Busy.show('리그전 경기를 불러오는 중입니다', { delay: 200 });
+        loadLeagueMatch().catch((e) => showToast(e.message)).finally(hideBusy);
+    }
 
     $('swap-players').addEventListener('click', () => {
         state.players.reverse();
@@ -582,6 +585,7 @@
             const button = $('save-button');
             button.disabled = true;
             $('result-message').textContent = '저장 중...';
+            const hideBusy = Busy.show(LEAGUE ? '결과를 보내는 중입니다' : '전적을 저장하는 중입니다');
             $('result-message').className = 'mt-3 text-xs font-semibold text-zinc-500 dark:text-zinc-400';
             try {
                 const request = LEAGUE ? {
@@ -611,6 +615,8 @@
                 button.disabled = false;
                 $('result-message').textContent = error.message;
                 $('result-message').className = 'mt-3 text-xs font-semibold text-amber-600 dark:text-amber-400';
+            } finally {
+                hideBusy();
             }
         });
     }
