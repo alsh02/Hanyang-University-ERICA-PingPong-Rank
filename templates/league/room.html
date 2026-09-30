@@ -133,7 +133,9 @@
     const apiBase = root.dataset.apiBase;   // 참가자·운영진은 /api/league/<코드>, 보기 전용은 /api/league/v/<키>
     const $ = (id) => document.getElementById(id);
     const escapeHtml = (text) => String(text).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
-    const eulReul = (word) => { const c = String(word).charCodeAt(String(word).length - 1); return c >= 0xAC00 && c <= 0xD7A3 && (c - 0xAC00) % 28 ? '을' : '를'; };   // 끝 글자 받침으로 을/를
+    const hasBatchim = (word) => { const c = String(word).charCodeAt(String(word).length - 1); return c >= 0xAC00 && c <= 0xD7A3 && (c - 0xAC00) % 28 !== 0; };
+    const eulReul = (word) => (hasBatchim(word) ? '을' : '를');   // 끝 글자 받침으로 을/를
+    const iGa = (word) => (hasBatchim(word) ? '이' : '가');
     const storage = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
 
     // 운영 키: 개설 직후 주소의 ?key= 로 받아 이 기기에 저장하고, 주소에서는 지운다
@@ -143,6 +145,14 @@
     const adminCode = storage.get(`league_admin_code_${code}`);
     const me = (() => { try { return JSON.parse(storage.get(`league_token_${code}`) || 'null'); } catch (e) { return null; } })();
     let canAdmin = isAdmin && !!adminKey;
+    // 이 기기 토큰의 지문. 서버가 참가자마다 공개하는 지문(tag)과 다르면, 같은 이름이 다른 기기로 다시 연결해 이 기기가 끊긴 것이다.
+    let myTag = null;
+    if (me && me.token && window.crypto && crypto.subtle) {
+        crypto.subtle.digest('SHA-256', new TextEncoder().encode(me.token)).then((buf) => {
+            myTag = [...new Uint8Array(buf)].map((x) => x.toString(16).padStart(2, '0')).join('').slice(0, 8);
+            if (tournament) render();
+        }).catch(() => {});
+    }
     if (!isViewer) storage.set('league_last', JSON.stringify({ code, url: location.pathname }));
 
     let tournament = null, activeGroup = null, pendingAction = null;
@@ -386,14 +396,19 @@
     const BIG_BUTTON = 'mt-1 h-12 w-full max-w-xs rounded-xl bg-red-600 text-base font-bold text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:bg-rubber dark:hover:bg-red-500 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500';
 
     // 편성 중 운영진: 본인 폰으로 새로 들어온 사람은 대진표 빈 자리에 저절로 들어가므로 알려 준다
-    let knownNames = null;
+    // 운영진: 누가 다른 기기로 다시 연결하면 알려 준다 (본인이 아닌데 연결했다면 운영진이 알아챌 수 있게)
+    let knownNames = null, knownReconnects = {};
     function notifyNewJoins(t) {
         const names = new Set(t.participants.map((p) => p.name));
-        if (knownNames && canAdmin && t.status === 'draft') {
-            const fresh = t.participants.filter((p) => !knownNames.has(p.name) && !p.added_by_admin);
-            if (fresh.length) showToast(`${fresh[0].name}${fresh.length > 1 ? ` 외 ${fresh.length - 1}명` : ''} 참가 · ${groupName(fresh[0].group)} 대진표 빈 자리에 들어갔습니다.`, 5000);
+        const reconnects = Object.fromEntries(t.participants.filter((p) => p.reconnected_at).map((p) => [p.name, p.reconnected_at]));
+        if (knownNames && canAdmin) {
+            const fresh = t.status === 'draft' ? t.participants.filter((p) => !knownNames.has(p.name) && !p.added_by_admin) : [];
+            const moved = t.participants.filter((p) => p.reconnected_at && knownReconnects[p.name] !== p.reconnected_at);
+            if (moved.length) showToast(`${moved[0].name}${iGa(moved[0].name)}${moved.length > 1 ? ` 외 ${moved.length - 1}명이` : ''} 다른 기기로 다시 연결했습니다.`, 6000);
+            else if (fresh.length) showToast(`${fresh[0].name}${fresh.length > 1 ? ` 외 ${fresh.length - 1}명` : ''} 참가 · ${groupName(fresh[0].group)} 대진표 빈 자리에 들어갔습니다.`, 5000);
         }
         knownNames = names;
+        knownReconnects = reconnects;
     }
 
     function renderBracket(t) {
@@ -485,9 +500,14 @@
         const card = $('me-card');
         const open = t.status === 'lobby' || t.status === 'draft';
         const standing = me && !open ? myStanding(t, me.name) : null;
-        const show = !isViewer && (isAdmin ? !!(standing && standing.match) : !!me || open);
+        const show = !isViewer && (isAdmin ? !!(standing && standing.match) : true);
         card.hidden = !show;
         if (!show) return;
+        if (!me && !open) {
+            // 시작한 뒤 참가 정보가 없는 기기: 구경하는 사람일 수도 있으니 작게, 참가자면 다시 연결하도록
+            card.innerHTML = `<p class="break-keep rounded-2xl border border-dashed border-zinc-300 px-4 py-3 text-center text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">참가자인데 이 기기에서 연결이 끊겼다면 <a href="${root.dataset.join}" class="font-semibold text-red-600 underline underline-offset-2 dark:text-red-400">다시 연결</a></p>`;
+            return;
+        }
         const box = (inner, strong) => `<div class="rounded-2xl bg-white p-4 sm:p-5 dark:bg-zinc-900 ${strong ? 'border-2 border-red-600 dark:border-red-500/60' : 'border border-zinc-200 dark:border-zinc-800'}">${inner}</div>`;
         const label = `<p class="text-xs font-semibold text-zinc-500 dark:text-zinc-400">${open ? '내 참가 정보' : t.status === 'finished' ? '내 결과' : '내 경기'}</p>`;
         if (!me) {
@@ -504,6 +524,7 @@
                 <p class="mt-3 border-t border-zinc-100 pt-3 text-sm font-medium text-amber-700 dark:border-zinc-800 dark:text-amber-300">운영진이 참가 목록에서 뺐습니다. 잘못됐다면 운영진에게 알려 주세요.</p>`);
             return;
         }
+        const stale = !isAdmin && myTag !== null && p.tag !== myTag;   // 같은 이름이 다른 기기로 다시 연결했다
         const count = t.participants.filter((x) => x.group === p.group).length;
         const head = `<div class="flex items-start justify-between gap-3">
                 <div class="min-w-0">${label}
@@ -515,7 +536,10 @@
                 </div>
             </div>`;
         let body;
-        if (open) {
+        if (stale) {
+            body = `<p class="text-sm font-medium text-amber-700 dark:text-amber-300">이 기기의 참가 연결이 끊겼습니다. 같은 이름으로 다른 기기에서 다시 연결했기 때문입니다.</p>
+                <a href="${root.dataset.join}&name=${encodeURIComponent(me.name)}" class="mt-3 inline-flex h-9 items-center rounded-lg bg-red-600 px-3 text-sm font-semibold text-white hover:bg-red-700 dark:bg-rubber dark:hover:bg-red-500">이 기기로 다시 연결</a>`;
+        } else if (open) {
             body = `<p class="text-sm text-zinc-600 dark:text-zinc-300">${t.status === 'draft' ? '운영진이 대진표를 짜고 있습니다. 시작하면 여기에 내 경기가 나옵니다.' : '운영진이 대진표를 만들어 시작하면 여기에 내 경기가 나옵니다.'}</p>
                 ${p.group_undecided ? '<p class="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">부수가 없어 그룹은 운영진이 확인합니다.</p>' : ''}`;
         } else if (standing && standing.match) {
@@ -534,7 +558,7 @@
         } else {
             body = '<p class="text-sm font-medium text-amber-700 dark:text-amber-300">대진표에 아직 내 자리가 없습니다. 운영진에게 알려 주세요.</p>';
         }
-        card.innerHTML = box(`${head}<div class="mt-3 break-keep border-t border-zinc-100 pt-3 dark:border-zinc-800">${body}</div>`, standing && standing.match);
+        card.innerHTML = box(`${head}<div class="mt-3 break-keep border-t border-zinc-100 pt-3 dark:border-zinc-800">${body}</div>`, !stale && standing && standing.match);
     }
 
     // ---------- 대진표: 왼쪽 1라운드에서 오른쪽 결승으로 이어지는 나무 모양 ----------

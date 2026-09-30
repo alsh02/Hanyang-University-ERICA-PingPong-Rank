@@ -74,9 +74,10 @@ FINISHED_ROOM_DAYS = 2    # 끝난 방은 이틀까지만 목록에 남긴다
 
 
 class LeagueError(Exception):
-    def __init__(self, message, status=400):
+    def __init__(self, message, status=400, **extra):
         super().__init__(message)
         self.status = status
+        self.extra = extra   # 응답에 함께 실을 값 (예: 다시 연결할 수 있음)
 
 
 def _spreadsheet():
@@ -296,9 +297,15 @@ def assemble(state, logs):
     return state
 
 
+def token_tag(token):
+    # 토큰의 지문(해시 앞 8자). 화면이 자기 토큰과 비교해 '이 기기의 연결이 끊겼는지' 알 수 있게 공개한다 (토큰은 알아낼 수 없다).
+    return hashlib.sha256(token.encode()).hexdigest()[:8] if token else ""
+
+
 def compute_participants(state):
     # 참가 로그 → 참가자 목록 (같은 이름은 처음 한 번만). 제외한 이름은 뺀다.
-    participants, tokens = [], {}
+    # 같은 이름의 뒤 줄: 운영진이 넣어 둔 이름을 본인이 참가하면 토큰을 잇고, '다시 연결'이면 토큰을 바꾼다(예전 기기는 끊긴다).
+    participants, tokens, by_name = [], {}, {}
     removed = set(state["removed"])
     for data in state["_joins"]:
         name = data.get("name", "")
@@ -306,13 +313,16 @@ def compute_participants(state):
             continue
         if name not in tokens:
             tokens[name] = data.get("token", "")
-            participants.append({"name": name, "division": data.get("division", ""), "joined_at": data["at"],
-                                 "added_by_admin": data.get("by") == "운영진"})
-        elif not tokens[name] and data.get("token"):
-            tokens[name] = data["token"]   # 운영진이 먼저 넣어 둔 이름을 본인이 나중에 참가해 연결한 경우
-            for p in participants:
-                if p["name"] == name:
-                    p["added_by_admin"] = False
+            by_name[name] = {"name": name, "division": data.get("division", ""), "joined_at": data["at"],
+                             "added_by_admin": data.get("by") == "운영진", "tag": token_tag(tokens[name])}
+            participants.append(by_name[name])
+        elif data.get("token") and (not tokens[name] or data.get("reconnect")):
+            tokens[name] = data["token"]
+            p = by_name[name]
+            p["added_by_admin"] = False
+            p["tag"] = token_tag(data["token"])
+            if data.get("reconnect"):
+                p["reconnected_at"] = data["at"]
     state["participants"] = participants
     state["_tokens"] = tokens
     apply_groups(state)
@@ -1007,7 +1017,7 @@ def _run(state, op, joins=(), **extra):
 
 @league_bp.errorhandler(LeagueError)
 def _handle_error(error):
-    return jsonify({"error": str(error)}), error.status
+    return jsonify({"error": str(error), **error.extra}), error.status
 
 
 @league_bp.errorhandler(Exception)
@@ -1237,10 +1247,10 @@ def api_view_state(view):
 
 @league_bp.route("/api/league/<code>/join", methods=["POST"])
 def api_join(code):
+    # 참가 또는 다시 연결. 새 이름은 접수 중에만 받는다. 이미 참가자인 이름은 시작한 뒤에도 이 기기로 다시 연결할 수 있다
+    # (폰을 바꿨거나 앱 안 브라우저로 참가했다가 다른 브라우저로 연 경우). 그 이름이 다른 기기에 연결돼 있으면 reconnect로
+    # 확인을 받고, 예전 기기의 토큰은 끊는다. 운영진이 넣어 둔 이름(아직 기기 없음)은 확인 없이 연결한다.
     state = load_state(code)
-    if state["status"] not in OPEN_STATUSES:
-        raise LeagueError("참가 접수가 끝난 토너먼트입니다.")
-    _check_write_limit()
     members, _ = _members()
     data = request.get_json(silent=True) or {}
     room = str(data.get("room", "")).strip()
@@ -1251,15 +1261,22 @@ def api_join(code):
         raise LeagueError("명단에 없는 이름입니다. 부수표에 등록된 이름을 골라 주세요.")
     if name in state["removed"]:
         raise LeagueError("운영진이 참가 목록에서 제외한 이름입니다. 운영진에게 문의하세요.")
-    if state["_tokens"].get(name):
-        raise LeagueError("이미 참가한 이름입니다. 본인이 맞다면 처음 참가한 기기에서 열어 주세요.", 409)
+    joined = name in state["_tokens"]
+    if not joined and state["status"] not in OPEN_STATUSES:
+        raise LeagueError("참가 접수가 끝난 토너먼트입니다. 이미 참가한 사람만 다시 연결할 수 있습니다.")
+    reconnect = joined and bool(state["_tokens"][name])
+    if reconnect and not data.get("reconnect"):
+        raise LeagueError("이미 참가한 이름입니다. 본인이면 이 기기로 다시 연결할 수 있습니다. 예전 기기는 연결이 끊깁니다.", 409, can_reconnect=True)
+    _check_write_limit()
     token = secrets.token_urlsafe(12)
     entry = {"name": name, "division": members[name]["부수"], "token": token}
+    if reconnect:
+        entry["reconnect"] = True
     at = append_logs(state, [("참가", entry)])
-    # 방금 들어온 사람을 응답에 바로 넣어 준다 (다시 읽지 않음). 운영진이 미리 넣어 둔 이름이면 그 자리에 연결만 된다.
+    # 방금 들어온 사람을 응답에 바로 넣어 준다 (다시 읽지 않음)
     state["_joins"].append({**entry, "at": at})
     compute_participants(state)
-    return jsonify({"token": token, "name": name, "tournament": public_view(state)})
+    return jsonify({"token": token, "name": name, "reconnected": reconnect, "tournament": public_view(state)})
 
 
 def _editable_groups(state, keys):
@@ -1394,6 +1411,9 @@ def api_report(code, match_id):
 
     token = str(data.get("token", ""))
     reporter = next((n for n, t in state["_tokens"].items() if t and secrets.compare_digest(t, token)), None)
+    if reporter is None and token:
+        # 토큰은 있는데 맞는 사람이 없다: 같은 이름이 다른 기기로 다시 연결해 이 기기가 끊긴 경우
+        raise LeagueError("이 기기의 참가 연결이 끊겼습니다. 참가 화면에서 다시 연결해 주세요.", 403)
     if reporter not in match["players"]:
         raise LeagueError("이 경기의 선수만 결과를 보낼 수 있습니다.", 403)
     _check_write_limit()

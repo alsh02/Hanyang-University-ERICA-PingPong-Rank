@@ -105,7 +105,7 @@
             if (codeInput.value !== code || room) return;
             if (!response.ok) { label.textContent = '· 그 코드의 방이 없습니다'; return; }
             const t = data.tournament;
-            label.textContent = ['lobby', 'draft'].includes(t.status) ? `· '${t.name}' 방` : `· '${t.name}' 방은 참가 접수가 끝났습니다`;
+            label.textContent = ['lobby', 'draft'].includes(t.status) ? `· '${t.name}' 방` : `· '${t.name}' 방 · 이미 참가한 사람만 다시 연결할 수 있습니다`;
         } catch (e) { lookedUp = ''; }
     }
 
@@ -143,16 +143,26 @@
     list.addEventListener('click', (event) => { const item = event.target.closest('[data-index]'); if (item) choose(Number(item.dataset.index)); });
     function choose(i) { chosen = options[i]; input.value = chosen.이름; close(); input.blur(); sync(); }
 
+    // 참가를 보낸다. 이미 다른 기기로 참가한 이름이면 서버가 409(can_reconnect)로 알려 주고, 본인이 확인하면 이 기기로 다시 연결한다.
+    async function sendJoin(code, reconnect) {
+        const response = await fetch(`/api/league/${code}/join`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: chosen.이름, room: room || '', reconnect }) });
+        return { response, data: await response.json().catch(() => ({})) };
+    }
     document.getElementById('join-form').addEventListener('submit', async (event) => {
         event.preventDefault();
         if (!chosen) return;
         button.disabled = true;
         error.hidden = true;
-        const hideBusy = Busy.show('토너먼트 참가 중입니다');
+        let hideBusy = Busy.show('토너먼트 참가 중입니다');
         const code = codeInput.value;
         try {
-            const response = await fetch(`/api/league/${code}/join`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: chosen.이름, room: room || '' }) });
-            const data = await response.json();
+            let { response, data } = await sendJoin(code, false);
+            if (response.status === 409 && data.can_reconnect) {
+                hideBusy();
+                if (!confirm(`${chosen.이름}은(는) 이미 다른 기기에서 참가했습니다. 이 기기로 다시 연결할까요? 예전 기기는 연결이 끊깁니다.`)) throw new Error(data.error);
+                hideBusy = Busy.show('다시 연결하는 중입니다');
+                ({ response, data } = await sendJoin(code, true));
+            }
             if (!response.ok) throw new Error(data.error || '참가하지 못했습니다.');
             const url = `/league/${code}`;
             try {
@@ -167,6 +177,10 @@
             sync();
         }
     });
+    // 방 화면의 '다시 연결'로 왔으면 이름이 주소에 실려 온다
+    const presetName = new URLSearchParams(location.search).get('name');
+    const preset = presetName && MEMBERS.find((m) => m.이름 === presetName);
+    if (preset) { chosen = preset; input.value = preset.이름; }
     sync();
     if (codeInput.value.length === 6) {
         // QR로 들어오면 코드가 채워져 있으니 이름 칸이 보이게 내려 준다
