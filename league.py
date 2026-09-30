@@ -678,7 +678,7 @@ def api_create():
         raise LeagueError("5판 3선 전환 시점이 올바르지 않습니다.")
     seed = data.get("seed", "random")
     if seed not in ("random", "division"):
-        raise LeagueError("시드 방식이 올바르지 않습니다.")
+        raise LeagueError("대진 배치 방식이 올바르지 않습니다.")
     groups = _parse_groups(data.get("groups"))
 
     rows, _ = _read_all(force=True)

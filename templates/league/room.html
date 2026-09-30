@@ -235,7 +235,7 @@
         $('room-name').textContent = t.name;
         $('room-code').textContent = t.code;
         const fromLabel = { 2: '결승', 4: '준결승', 8: '8강', 16: '16강', 32: '32강' }[t.format.best_of_from];
-        $('room-format').textContent = `${t.format.target}점 · 3판 2선${fromLabel ? ` · ${fromLabel}부터 5판 3선` : ''} · ${t.seed === 'division' ? '부수 시드' : '무작위 배치'}`;
+        $('room-format').textContent = `${t.format.target}점 · 3판 2선${fromLabel ? ` · ${fromLabel}부터 5판 3선` : ''} · ${t.seed === 'division' ? '부수 순 배치' : '무작위 배치'}`;
         const pill = $('status-pill');
         pill.textContent = t.status_label;
         pill.className = 'mb-3 rounded-full border px-3 py-1 text-xs font-semibold ' + ({
@@ -351,7 +351,7 @@
             $('admin-tools').innerHTML = `
                 <span class="font-semibold text-zinc-500 dark:text-zinc-400">${escapeHtml(groupName(activeGroup))} 운영</span>
                 ${b && b.rounds >= 1 ? (locked ? '<span class="text-zinc-400">결과가 확정되어 대진은 고정</span>'
-                    : `${button(editMode ? '대진 수정 끝' : '대진 수정', 'data-edit', editMode ? 'primary' : 'ghost')}${button('무작위 재배치', 'data-rebuild="random"')}${button('부수 시드 재배치', 'data-rebuild="division"')}`) : ''}
+                    : `${button(editMode ? '대진 수정 끝' : '대진 수정', 'data-edit', editMode ? 'primary' : 'ghost')}${button('무작위 재배치', 'data-rebuild="random"')}${button('부수 순 재배치', 'data-rebuild="division"')}`) : ''}
                 ${b && b.rounds >= 2 ? button(b.third ? '3·4위전 취소' : '3·4위전 진행', `data-third="${b.third ? 'off' : 'on'}"`, b.third ? 'ghost' : 'primary') : '<span class="text-zinc-400">3·4위전 없음(준결승 없음)</span>'}
                 <label class="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-300">5판 3선 전환
                     <select id="best-of-from" class="select-chevron select-chevron-sm h-8 rounded-lg border border-zinc-200 bg-white pl-2.5 pr-8 text-xs font-semibold text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
@@ -537,7 +537,7 @@
         if (!el) return;
         if (el.hasAttribute('data-sound')) { soundOn = !soundOn; storage.set('league_sound', soundOn ? 'on' : 'off'); renderPendingPanel(pendingReports(tournament)); if (soundOn) beep(); return; }
         if (el.hasAttribute('data-edit')) { editMode = !editMode; render(); return; }
-        if (el.dataset.rebuild) { if (confirm(`${groupName(activeGroup)} 대진표를 ${el.dataset.rebuild === 'random' ? '무작위로' : '부수 시드로'} 다시 만들까요?`)) act(`/brackets/${activeGroup}/rebuild`, { seed: el.dataset.rebuild }, '대진표를 다시 만들었습니다'); return; }
+        if (el.dataset.rebuild) { if (confirm(`${groupName(activeGroup)} 대진표를 ${el.dataset.rebuild === 'random' ? '무작위로' : '부수 순으로'} 다시 만들까요?`)) act(`/brackets/${activeGroup}/rebuild`, { seed: el.dataset.rebuild }, '대진표를 다시 만들었습니다'); return; }
         const find = (id) => Object.values(tournament.brackets).flatMap((b) => b.matches.concat(b.third ? [b.third] : [])).find((m) => m.id === id);
         if (el.dataset.third) { act('/third-place', { group: activeGroup, enabled: el.dataset.third === 'on' }, el.dataset.third === 'on' ? '3·4위전을 추가했습니다' : '3·4위전을 뺐습니다'); return; }
         if (el.dataset.group) { activeGroup = el.dataset.group; render(); }
