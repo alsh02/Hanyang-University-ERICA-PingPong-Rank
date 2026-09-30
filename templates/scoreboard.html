@@ -287,11 +287,11 @@
             } else {
                 state.points = [0, 0];
                 state.serverOfGame ^= 1;  // 게임마다 첫 서브가 바뀐다
-                showToast(`${state.games.length}게임 종료 · ${a} : ${b}`);
+                showToast(`${state.games.length}게임 종료 · ${a} : ${b}.`);
             }
         } else if (state.games.length === state.bestOf - 1 && Math.max(...state.points) === 5
                    && Math.min(...state.points) < 5) {
-            showToast('마지막 게임 5점 · 코트 체인지');
+            showToast('마지막 게임 5점 · 코트 체인지.');
         }
         render();
     }
@@ -365,7 +365,7 @@
         const el = document.documentElement;
         const request = el.requestFullscreen || el.webkitRequestFullscreen;
         const notSupported = () => {
-            if (!silent) showToast('이 브라우저에서는 전체화면을 지원하지 않습니다');
+            if (!silent) showToast('이 브라우저에서는 전체화면을 지원하지 않습니다.');
             return false;
         };
         if (!request) return Promise.resolve(notSupported());
@@ -386,7 +386,7 @@
         };
         ['fullscreenchange', 'webkitfullscreenchange'].forEach((type) => document.addEventListener(type, focusInput));
         exitFullscreen();
-        showToast('전체화면 잠시 해제 · 경기를 시작하면 다시 전체화면');
+        showToast('전체화면 잠시 해제 · 경기를 시작하면 다시 전체화면.');
     }
 
     // ---------- 선수 선택: 이름을 입력하면 아래 목록에서 고른다 ----------
@@ -532,7 +532,7 @@
         // 왼쪽 위 버튼은 메인이 아니라 대진표로
         homeLink.href = LEAGUE.backUrl;
         homeLink.querySelector('span').textContent = '대진표로';
-        if (match.status !== 'pending') showToast('이미 결과가 확정된 경기입니다');
+        if (match.status !== 'pending') showToast('이미 결과가 확정된 경기입니다.');
         syncSetup();
     }
     if (LEAGUE) {

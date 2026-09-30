@@ -133,6 +133,7 @@
     const apiBase = root.dataset.apiBase;   // 참가자·운영진은 /api/league/<코드>, 보기 전용은 /api/league/v/<키>
     const $ = (id) => document.getElementById(id);
     const escapeHtml = (text) => String(text).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+    const eulReul = (word) => { const c = String(word).charCodeAt(String(word).length - 1); return c >= 0xAC00 && c <= 0xD7A3 && (c - 0xAC00) % 28 ? '을' : '를'; };   // 끝 글자 받침으로 을/를
     const storage = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
 
     // 운영 키: 개설 직후 주소의 ?key= 로 받아 이 기기에 저장하고, 주소에서는 지운다
@@ -266,7 +267,7 @@
         if (firstRender) { firstRender = false; return; }   // 처음 열었을 때 이미 있던 보고는 패널로만
         if (!canAdmin || !fresh.length) return;
         const { group, m } = fresh[fresh.length - 1];
-        showToast(`${m.report.by} 결과 보고 · ${groupName(group)} ${stageOf(group, m)} · 승자 ${m.report.winner}${fresh.length > 1 ? ` 외 ${fresh.length - 1}건` : ''}`, 6000);
+        showToast(`${m.report.by} 결과 보고 · ${groupName(group)} ${stageOf(group, m)} · 승자 ${m.report.winner}${fresh.length > 1 ? ` 외 ${fresh.length - 1}건` : ''}.`, 6000);
         try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) {}
         beep();
     }
@@ -390,7 +391,7 @@
         const names = new Set(t.participants.map((p) => p.name));
         if (knownNames && canAdmin && t.status === 'draft') {
             const fresh = t.participants.filter((p) => !knownNames.has(p.name) && !p.added_by_admin);
-            if (fresh.length) showToast(`${fresh[0].name}${fresh.length > 1 ? ` 외 ${fresh.length - 1}명` : ''} 참가 · ${groupName(fresh[0].group)} 대진표 빈 자리에 들어갔습니다`, 5000);
+            if (fresh.length) showToast(`${fresh[0].name}${fresh.length > 1 ? ` 외 ${fresh.length - 1}명` : ''} 참가 · ${groupName(fresh[0].group)} 대진표 빈 자리에 들어갔습니다.`, 5000);
         }
         knownNames = names;
     }
@@ -710,7 +711,7 @@
                 d.ghost.remove();
                 d.row.classList.remove('opacity-40');
                 if (d.target) d.target.classList.remove(...HIGHLIGHT);
-                if (commit && d.target) act(`/brackets/${activeGroup}/move`, { name: d.name, match: d.target.dataset.match, slot: Number(d.target.dataset.index) }, { done: '자리를 옮겼습니다', busy: '자리를 옮기는 중입니다', quick: true });
+                if (commit && d.target) act(`/brackets/${activeGroup}/move`, { name: d.name, match: d.target.dataset.match, slot: Number(d.target.dataset.index) }, { done: '자리를 옮겼습니다.', busy: '자리를 옮기는 중입니다', quick: true });
             }
             d = null; dragging = false;
         }
@@ -798,7 +799,7 @@
             }
             hideBusy();
             free.forEach((m) => pending.delete(m.이름));
-            if (added) showToast(`${added}명을 추가했습니다`);
+            if (added) showToast(`${added}명을 추가했습니다.`);
             refreshAddList(); updateAllButton();
         });
         refreshAddList = () => { if (!list.hidden) open(input.value.trim()); updateAllButton(); };
@@ -821,7 +822,7 @@
             if (!member || pending.has(member.이름)) return;
             const query = input.value.trim();
             pending.add(member.이름); open(query);                       // 누른 줄에 바로 회전 표시
-            const data = await act('/participants/add', { names: [member.이름] }, { done: `${member.이름} 추가` });   // 누른 줄의 회전 표시가 기다림을 보여 준다 (상자로 가리면 연달아 누를 수 없다)
+            const data = await act('/participants/add', { names: [member.이름] }, { done: `${member.이름}${eulReul(member.이름)} 추가했습니다.` });   // 누른 줄의 회전 표시가 기다림을 보여 준다 (상자로 가리면 연달아 누를 수 없다)
             pending.delete(member.이름);
             open(input.value.trim());                                   // 성공하면 그 줄이 체크로 바뀐다
             updateAllButton();
@@ -869,7 +870,7 @@
             const data = await serial(() => api(`/matches/${match.id}/${mode}`, body)).finally(hideBusy);
             if (accept(data.tournament)) render();
             $('result-panel').hidden = true;
-            showToast(mode === 'confirm' ? '결과를 확정했습니다' : '결과를 보냈습니다. 운영진이 확인하면 반영됩니다');
+            showToast(mode === 'confirm' ? '결과를 확정했습니다.' : '결과를 보냈습니다. 운영진이 확인하면 반영됩니다.');
         } catch (err) {
             error.textContent = err.message; error.hidden = false;
         } finally { $('result-submit').disabled = false; }
@@ -902,35 +903,35 @@
         if (el.hasAttribute('data-place')) {
             const count = ((tournament.unplaced || {})[activeGroup] || []).length;
             if (confirm(`${groupName(activeGroup)} 대진표를 다시 짜서 빠진 ${count}명을 넣을까요? 지금 대진은 ${tournament.seed === 'division' ? '부수 순으로' : '무작위로'} 새로 만들어집니다.`)) {
-                act(`/brackets/${activeGroup}/rebuild`, { seed: tournament.seed }, { done: '대진표에 넣었습니다', busy: '대진표를 다시 짜는 중입니다' });
+                act(`/brackets/${activeGroup}/rebuild`, { seed: tournament.seed }, { done: '대진표에 넣었습니다.', busy: '대진표를 다시 짜는 중입니다' });
             }
             return;
         }
-        if (el.dataset.rebuild) { if (confirm(`${groupName(activeGroup)} 대진표를 무작위로 다시 만들까요?`)) act(`/brackets/${activeGroup}/rebuild`, { seed: el.dataset.rebuild }, { done: '대진표를 다시 만들었습니다', busy: '대진표를 다시 짜는 중입니다' }); return; }
+        if (el.dataset.rebuild) { if (confirm(`${groupName(activeGroup)} 대진표를 무작위로 다시 만들까요?`)) act(`/brackets/${activeGroup}/rebuild`, { seed: el.dataset.rebuild }, { done: '대진표를 다시 만들었습니다.', busy: '대진표를 다시 짜는 중입니다' }); return; }
         const find = (id) => Object.values(tournament.brackets).flatMap((b) => b.matches.concat(b.third ? [b.third] : [])).find((m) => m.id === id);
         if (el.dataset.third) {
             const on = el.dataset.third === 'on';
-            act('/third-place', { group: activeGroup, enabled: on }, { done: on ? '3·4위전을 추가했습니다' : '3·4위전을 뺐습니다', busy: on ? '3·4위전을 추가하는 중입니다' : '3·4위전을 빼는 중입니다', quick: true });
+            act('/third-place', { group: activeGroup, enabled: on }, { done: on ? '3·4위전을 추가했습니다.' : '3·4위전을 뺐습니다.', busy: on ? '3·4위전을 추가하는 중입니다' : '3·4위전을 빼는 중입니다', quick: true });
             return;
         }
         if (el.dataset.group) { activeGroup = el.dataset.group; render(); }
-        else if (el.dataset.remove) { if (confirm(`${el.dataset.remove}을(를) 참가 목록에서 제외할까요?`)) act('/participants', { name: el.dataset.remove, remove: true }, { done: '제외했습니다', busy: '참가자를 빼는 중입니다' }); }
-        else if (el.id === 'draft-button') act('/draft', {}, { done: '대진표를 만들었습니다. 고친 뒤 시작하세요', busy: '대진표를 만드는 중입니다' });
-        else if (el.id === 'start-button') { if (confirm('참가 접수를 마감하고 토너먼트를 시작할까요? 선수들 폰에 대진표가 보이고 결과를 보낼 수 있게 됩니다.')) act('/start', {}, { done: '토너먼트를 시작했습니다', busy: '토너먼트를 시작하는 중입니다' }); }
+        else if (el.dataset.remove) { if (confirm(`${el.dataset.remove}을(를) 참가 목록에서 제외할까요?`)) act('/participants', { name: el.dataset.remove, remove: true }, { done: '제외했습니다.', busy: '참가자를 빼는 중입니다' }); }
+        else if (el.id === 'draft-button') act('/draft', {}, { done: '대진표를 만들었습니다. 고친 뒤 시작하세요.', busy: '대진표를 만드는 중입니다' });
+        else if (el.id === 'start-button') { if (confirm('참가 접수를 마감하고 토너먼트를 시작할까요? 선수들 폰에 대진표가 보이고 결과를 보낼 수 있게 됩니다.')) act('/start', {}, { done: '토너먼트를 시작했습니다.', busy: '토너먼트를 시작하는 중입니다' }); }
         else if (el.id === 'show-qr') openQr();
         else if (el.id === 'copy-join') {
             const url = location.origin + root.dataset.join;
-            try { await navigator.clipboard.writeText(url); showToast('참가 링크를 복사했습니다'); } catch (err) { prompt('참가 링크', url); }
+            try { await navigator.clipboard.writeText(url); showToast('참가 링크를 복사했습니다.'); } catch (err) { prompt('참가 링크', url); }
         }
         else if (el.dataset.report) openResult(find(el.dataset.report), 'report');
         else if (el.dataset.confirm) openResult(find(el.dataset.confirm), 'confirm');
-        else if (el.dataset.confirmReport) act(`/matches/${el.dataset.confirmReport}/confirm`, {}, { done: '보고대로 확정했습니다', busy: '결과를 확정하는 중입니다', quick: true });
-        else if (el.dataset.reset) { if (confirm('이 경기 결과를 되돌릴까요?')) act(`/matches/${el.dataset.reset}/reset`, {}, { done: '되돌렸습니다', busy: '결과를 되돌리는 중입니다' }); }
+        else if (el.dataset.confirmReport) act(`/matches/${el.dataset.confirmReport}/confirm`, {}, { done: '보고대로 확정했습니다.', busy: '결과를 확정하는 중입니다', quick: true });
+        else if (el.dataset.reset) { if (confirm('이 경기 결과를 되돌릴까요?')) act(`/matches/${el.dataset.reset}/reset`, {}, { done: '되돌렸습니다.', busy: '결과를 되돌리는 중입니다' }); }
     });
     root.addEventListener('change', (e) => {
         const select = e.target.closest('[data-move]');
-        if (select) act('/participants', { name: select.dataset.move, group: select.value }, { done: '그룹을 바꿨습니다', busy: '그룹을 바꾸는 중입니다', quick: true });
-        if (e.target.id === 'best-of-from') act('/settings', { best_of_from: Number(e.target.value) }, { done: '5판 3선 전환 시점을 바꿨습니다', busy: '경기 방식을 바꾸는 중입니다', quick: true });
+        if (select) act('/participants', { name: select.dataset.move, group: select.value }, { done: '그룹을 바꿨습니다.', busy: '그룹을 바꾸는 중입니다', quick: true });
+        if (e.target.id === 'best-of-from') act('/settings', { best_of_from: Number(e.target.value) }, { done: '5판 3선 전환 시점을 바꿨습니다.', busy: '경기 방식을 바꾸는 중입니다', quick: true });
     });
     $('admin-login').addEventListener('submit', async (e) => {
         e.preventDefault();
