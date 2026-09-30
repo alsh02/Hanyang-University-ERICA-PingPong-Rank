@@ -279,6 +279,7 @@
         $('admin-hint').hidden = isAdmin || isViewer || t.status === 'lobby';
         if (isAdmin && !adminKey) showNotice('이 기기에는 운영 권한이 없습니다. 관리자 코드를 넣어 주세요. 코드는 개설한 운영진 화면 상단에 있고, 잃어버렸으면 \'탁우회 토너먼트\' 구글 시트의 \'토너먼트\' 탭에서 볼 수 있습니다.');
         else if (!isAdmin && !isViewer && !me && t.status === 'lobby') showNotice('아직 참가하지 않았습니다. 참가 페이지에서 코드를 넣고 이름을 고르세요.');
+        else if (!isAdmin && me && Object.values(t.unplaced || {}).some((names) => names.includes(me.name))) showNotice('대진표에 아직 내 자리가 없습니다. 운영진에게 알려 주세요.');
         else showNotice('');
 
         $('lobby').hidden = t.status !== 'lobby';
@@ -336,17 +337,20 @@
     }
 
     function renderBracket(t) {
-        const keys = Object.keys(t.brackets);
+        // 대진표가 있는 그룹 + 대진표는 없지만 자리를 기다리는 참가자가 있는 그룹 (그룹 순서대로)
+        const unplaced = t.unplaced || {};
+        const keys = t.groups.map((g) => g.key).filter((k) => t.brackets[k] || unplaced[k]);
         if (!activeGroup || !keys.includes(activeGroup)) activeGroup = (me && keys.includes(groupOf(me.name))) ? groupOf(me.name) : keys[0];
         $('group-tabs').innerHTML = keys.map((key) => {
             const b = t.brackets[key], count = t.participants.filter((p) => p.group === key).length;
             return `<button type="button" data-group="${key}" aria-current="${key === activeGroup}"
                 class="flex h-10 items-center gap-2 rounded-xl border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition-colors hover:border-red-400 aria-[current=true]:border-red-600 aria-[current=true]:bg-red-600 aria-[current=true]:text-white dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:aria-[current=true]:border-red-500 dark:aria-[current=true]:bg-rubber">
-                ${escapeHtml(groupName(key))}<span class="text-xs opacity-70">${count}명</span>${b.champion ? '<i data-lucide="crown" class="h-3.5 w-3.5"></i>' : ''}</button>`;
+                ${escapeHtml(groupName(key))}<span class="text-xs opacity-70">${count}명</span>${b && b.champion ? '<i data-lucide="crown" class="h-3.5 w-3.5"></i>' : ''}</button>`;
         }).join('');
 
         // 우승자 요약 (끝난 그룹부터)
-        const done = keys.filter((k) => t.brackets[k].champion);
+        const bracketKeys = keys.filter((k) => t.brackets[k]);
+        const done = bracketKeys.filter((k) => t.brackets[k].champion);
         $('champions').hidden = !done.length;
         $('champions').innerHTML = done.length ? `<div class="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
             <p class="mb-2 text-xs font-semibold text-zinc-500 dark:text-zinc-400">${t.status === 'finished' ? '리그전 종료 · 그룹별 우승' : '우승 확정'}</p>
@@ -354,14 +358,14 @@
         </div>` : '';
 
         // 내 다음 경기
-        const mine = me && keys.flatMap((k) => t.brackets[k].matches.concat(t.brackets[k].third ? [t.brackets[k].third] : [])).find((m) => m.status === 'pending' && m.players.includes(me.name));
+        const mine = me && bracketKeys.flatMap((k) => t.brackets[k].matches.concat(t.brackets[k].third ? [t.brackets[k].third] : [])).find((m) => m.status === 'pending' && m.players.includes(me.name));
         $('my-match').hidden = !mine;
         if (mine) {
-            const b = t.brackets[groupOf(me.name)], opponent = mine.players.find((p) => p !== me.name);
+            const b = t.brackets[mine.id.split('-')[0]];
             const stage = mine.third ? '3·4위전' : b.labels[mine.round];
             const reported = mine.report && mine.report.by === me.name;
             $('my-match').innerHTML = `<div class="rounded-2xl border-2 border-red-600 bg-white p-4 dark:border-red-500/60 dark:bg-zinc-900">
-                <p class="text-xs font-semibold text-red-600 dark:text-red-400">내 다음 경기 · ${escapeHtml(groupName(groupOf(me.name)))} ${escapeHtml(stage)} · ${mine.best_of}판 ${Math.floor(mine.best_of / 2) + 1}선</p>
+                <p class="text-xs font-semibold text-red-600 dark:text-red-400">내 다음 경기 · ${escapeHtml(groupName(mine.id.split('-')[0]))} ${escapeHtml(stage)} · ${mine.best_of}판 ${Math.floor(mine.best_of / 2) + 1}선</p>
                 <p class="mt-1 text-lg font-bold">${mine.players.map((p) => `<span class="${p === me.name ? 'text-red-600 dark:text-red-400' : ''}">${escapeHtml(p)}</span> <span class="text-xs font-medium text-zinc-400">${escapeHtml(divisionOf(p))}</span>`).join(' <span class="mx-1 text-sm font-medium text-zinc-400">vs</span> ')}</p>
                 ${reported ? `<p class="mt-2 text-sm text-zinc-500 dark:text-zinc-400">결과를 보냈습니다 (승자 ${escapeHtml(mine.report.winner)}). 운영진 확인을 기다리는 중입니다.</p>` : ''}
                 <div class="mt-3 flex flex-wrap gap-2">
@@ -377,7 +381,15 @@
         if (locked) editMode = false;
         if (canAdmin) {
             const from = t.format.best_of_from || 0;
+            // 시작하는 순간 들어온 참가 등으로 대진표에 자리가 없는 참가자: 결과가 없으면 대진표를 다시 짜서 넣는다.
+            // 지금 탭의 이름과 버튼을 보여 주고, 다른 그룹에도 있으면 그룹별 인원만 알린다.
+            const missing = unplaced[activeGroup] || [];
+            const elsewhere = Object.keys(unplaced).filter((k) => k !== activeGroup && unplaced[k].length).map((k) => `${groupName(k)} ${unplaced[k].length}명`);
+            const elsewhereLine = elsewhere.length ? `<span class="basis-full break-keep text-center text-amber-700 dark:text-amber-300">${missing.length ? '다른 그룹에도 있습니다' : '대진표에 없는 참가자가 있는 그룹'} · ${escapeHtml(elsewhere.join(', '))}</span>` : '';
             $('admin-tools').innerHTML = `
+                ${missing.length ? `<p class="basis-full break-keep text-center font-semibold text-amber-700 dark:text-amber-300">대진표에 없는 참가자 ${missing.length}명 · ${missing.map(escapeHtml).join(', ')}</p>
+                    ${locked ? '<span class="basis-full break-keep text-center text-zinc-400">확정된 결과가 있어 지금은 넣을 수 없습니다. 결과를 되돌리면 넣을 수 있습니다.</span>' : `<span class="basis-full flex justify-center">${button('대진표에 넣기', 'data-place', 'primary')}</span>`}` : ''}
+                ${elsewhereLine}
                 <span class="font-semibold text-zinc-500 dark:text-zinc-400">${escapeHtml(groupName(activeGroup))} 운영</span>
                 ${b && b.rounds >= 1 ? (locked ? '<span class="text-zinc-400">결과가 확정되어 대진은 고정</span>'
                     : `${button(editMode ? '대진 수정 끝' : '대진 수정', 'data-edit', editMode ? 'primary' : 'ghost')}${button('무작위 재배치', 'data-rebuild="random"')}`) : ''}
@@ -710,10 +722,17 @@
 
     // ---------- 버튼 처리 ----------
     root.addEventListener('click', async (e) => {
-        const el = e.target.closest('[data-group], [data-remove], #start-button, #copy-join, [data-report], [data-confirm], [data-confirm-report], [data-reset], [data-third], [data-sound], [data-edit], [data-rebuild]');
+        const el = e.target.closest('[data-group], [data-remove], #start-button, #copy-join, [data-report], [data-confirm], [data-confirm-report], [data-reset], [data-third], [data-sound], [data-edit], [data-rebuild], [data-place]');
         if (!el) return;
         if (el.hasAttribute('data-sound')) { soundOn = !soundOn; storage.set('league_sound', soundOn ? 'on' : 'off'); renderPendingPanel(pendingReports(tournament)); if (soundOn) beep(); return; }
         if (el.hasAttribute('data-edit')) { editMode = !editMode; render(); return; }
+        if (el.hasAttribute('data-place')) {
+            const count = ((tournament.unplaced || {})[activeGroup] || []).length;
+            if (confirm(`${groupName(activeGroup)} 대진표를 다시 짜서 빠진 ${count}명을 넣을까요? 지금 대진은 ${tournament.seed === 'division' ? '부수 순으로' : '무작위로'} 새로 만들어집니다.`)) {
+                act(`/brackets/${activeGroup}/rebuild`, { seed: tournament.seed }, '대진표에 넣었습니다');
+            }
+            return;
+        }
         if (el.dataset.rebuild) { if (confirm(`${groupName(activeGroup)} 대진표를 무작위로 다시 만들까요?`)) act(`/brackets/${activeGroup}/rebuild`, { seed: el.dataset.rebuild }, '대진표를 다시 만들었습니다'); return; }
         const find = (id) => Object.values(tournament.brackets).flatMap((b) => b.matches.concat(b.third ? [b.third] : [])).find((m) => m.id === id);
         if (el.dataset.third) { act('/third-place', { group: activeGroup, enabled: el.dataset.third === 'on' }, el.dataset.third === 'on' ? '3·4위전을 추가했습니다' : '3·4위전을 뺐습니다'); return; }
