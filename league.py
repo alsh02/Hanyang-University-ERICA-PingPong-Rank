@@ -1053,7 +1053,7 @@ def api_rooms():
 
 @league_bp.route("/league/admin")
 def league_admin_login():
-    return render_template("league/admin.html", code=normalize_code(request.args.get("code", "")))
+    return render_template("league/admin.html")
 
 
 def _room_name(code):
@@ -1111,9 +1111,10 @@ def api_create():
     groups = _parse_groups(data.get("groups"))
 
     rows, _ = _read_all(force=True)
-    used = {r[0].strip() for r in rows[1:] if r}
+    # 참가 코드끼리, 관리자 코드끼리 겹치지 않게 한다 — 관리자 코드만으로 방을 찾아 운영 화면을 열기 때문이다
+    used = {r[0].strip() for r in rows[1:] if r} | {c for _, c in _admin_codes(rows)}
     code = new_code(used)
-    admin_code = new_code(used | {code})   # 참가 코드와 다른 관리자 코드
+    admin_code = new_code(used | {code})
     state = {
         "code": code, "name": name, "status": "lobby", "created_at": kst_now(), "updated_at": kst_now(),
         "admin_key": secrets.token_urlsafe(18), "admin_code": admin_code,
@@ -1126,21 +1127,58 @@ def api_create():
                     "join_url": url_for("league.league_room", code=code)})
 
 
-@league_bp.route("/api/league/<code>/admin-login", methods=["POST"])
-def api_admin_login(code):
-    # 관리자 코드를 맞히면 이 기기에 운영 키를 내준다 (다른 운영진 폰에서도 운영 화면을 열 수 있게)
-    state = load_state(code)
+def _check_admin_login_limit():
     now = time.monotonic()
     while _admin_logins and now - _admin_logins[0] > 600:
         _admin_logins.popleft()
     if len(_admin_logins) >= ADMIN_LOGIN_LIMIT:
         raise LeagueError("관리자 코드 시도가 너무 많습니다. 잠시 후 다시 해 주세요.", 429)
     _admin_logins.append(now)
+
+
+def _admin_codes(rows):
+    # (행의 상태JSON, 관리자 코드) — 지운 방은 빼고. 예전 방은 F열이 비어 있을 수 있어 JSON에서 읽는다.
+    for row in rows[1:]:
+        if len(row) < 5 or not row[4]:
+            continue
+        try:
+            raw = json.loads(row[4])
+        except ValueError:
+            continue
+        if raw.get("admin_code"):
+            yield raw, raw["admin_code"]
+
+
+def _login_response(state):
+    return jsonify({"code": state["code"], "admin_key": state["admin_key"], "admin_code": state["admin_code"],
+                    "admin_url": url_for("league.league_admin", code=state["code"])})
+
+
+@league_bp.route("/api/league/admin-login", methods=["POST"])
+def api_admin_login_by_code():
+    # 관리자 코드만으로 그 방을 찾아 이 기기에 운영 키를 내준다 (관리자 코드는 방마다 다르다)
+    _check_admin_login_limit()
+    admin_code = normalize_code((request.get_json(silent=True) or {}).get("admin_code", ""))
+    if len(admin_code) != 6:
+        raise LeagueError("관리자 코드 6자리를 넣어 주세요.")
+    rows, _ = _read_all()
+    found = [raw for raw, c in _admin_codes(rows) if secrets.compare_digest(c, admin_code)]
+    if not found:
+        raise LeagueError("그 관리자 코드의 토너먼트가 없습니다.", 403)
+    # 예전에 만든 방끼리 코드가 겹쳤다면 가장 최근 방
+    latest = max(found, key=lambda raw: raw.get("created_at", ""))
+    return _login_response(load_state(latest["code"]))
+
+
+@league_bp.route("/api/league/<code>/admin-login", methods=["POST"])
+def api_admin_login(code):
+    # 방 화면에서 관리자 코드를 넣은 경우 (주소에 참가 코드가 있다)
+    state = load_state(code)
+    _check_admin_login_limit()
     admin_code = normalize_code((request.get_json(silent=True) or {}).get("admin_code", ""))
     if not admin_code or not secrets.compare_digest(admin_code, state.get("admin_code", "")):
         raise LeagueError("관리자 코드가 맞지 않습니다.", 403)
-    return jsonify({"admin_key": state["admin_key"], "admin_code": state["admin_code"],
-                    "admin_url": url_for("league.league_admin", code=state["code"])})
+    return _login_response(state)
 
 
 @league_bp.route("/api/league/<code>/settings", methods=["POST"])
