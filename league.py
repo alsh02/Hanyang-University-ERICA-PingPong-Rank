@@ -411,6 +411,27 @@ def swap_slots(bracket, a, b):
     reflow_bracket(bracket)
 
 
+def move_player(bracket, name, match_id, slot):
+    # 1라운드의 특정 자리로 선수를 옮긴다. 그 자리에 다른 선수가 있으면 두 사람의 자리가 바뀐다.
+    targets = {m["id"]: m for m in bracket["matches"] if m["round"] == 1}
+    target = targets.get(match_id)
+    if target is None or slot not in (0, 1):
+        raise LeagueError("1라운드 자리로만 옮길 수 있습니다.")
+    source = next(((m, i) for m in targets.values() for i, p in enumerate(m["players"]) if p == name), None)
+    if source is None:
+        raise LeagueError("이 그룹 1라운드에 없는 선수입니다.")
+    src_match, src_slot = source
+    if src_match is target and src_slot == slot:
+        return
+    other = target["players"][slot]
+    target["players"][slot], src_match["players"][src_slot] = name, other
+    if any(not any(m["players"]) for m in targets.values()):
+        # 아무도 없는 대진이 생기면 그 자리의 상대가 영영 기다리게 되므로 되돌리고 거절한다
+        target["players"][slot], src_match["players"][src_slot] = other, name
+        raise LeagueError("그 자리로 옮기면 빈 대진이 생깁니다. 다른 선수와 자리를 바꿔 주세요.")
+    reflow_bracket(bracket)
+
+
 def _advance(bracket, by_id, match, winner, status="confirmed"):
     match["winner"] = winner
     match["status"] = status
@@ -921,6 +942,26 @@ def api_swap(code, group):
     _editable_groups(state, {group})
     _check_write_limit()
     swap_slots(state["brackets"][group], a, b)
+    refresh_status(state)
+    save_state(state)
+    return _ok(state)
+
+
+@league_bp.route("/api/league/<code>/brackets/<group>/move", methods=["POST"])
+def api_move(code, group):
+    # 운영진: 결과가 없는 그룹에서 선수를 1라운드의 다른 자리로 끌어 놓는다 (자리에 사람이 있으면 서로 바꾼다)
+    state = load_state(code, force=True)
+    _require_admin(state)
+    if state["status"] != "running" or group not in state["brackets"]:
+        raise LeagueError("진행 중인 그룹만 고칠 수 있습니다.")
+    data = request.get_json(silent=True) or {}
+    name, match_id = str(data.get("name", "")).strip(), str(data.get("match", "")).strip()
+    slot = data.get("slot")
+    if not name or not match_id or slot not in (0, 1):
+        raise LeagueError("옮길 선수와 자리를 알려 주세요.")
+    _editable_groups(state, {group})
+    _check_write_limit()
+    move_player(state["brackets"][group], name, match_id, slot)
     refresh_status(state)
     save_state(state)
     return _ok(state)

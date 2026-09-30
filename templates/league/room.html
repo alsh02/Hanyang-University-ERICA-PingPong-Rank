@@ -60,7 +60,7 @@
         <div id="pending-reports" hidden class="mx-auto mb-4 max-w-3xl rounded-2xl border-2 border-amber-300 bg-amber-50 p-4 dark:border-amber-500/40 dark:bg-amber-500/10"></div>
         <div id="group-tabs" class="mb-4 flex flex-wrap justify-center gap-2"></div>
         <div id="admin-tools" hidden class="mx-auto mb-4 flex max-w-3xl flex-wrap items-center justify-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs dark:border-zinc-800 dark:bg-zinc-900"></div>
-        <div id="rounds" class="-mx-4 flex gap-3 overflow-x-auto px-4 pb-3 sm:mx-0 sm:px-0"></div>
+        <div id="rounds" class="-mx-4 overflow-x-auto px-4 pb-3 sm:mx-0 sm:px-0"></div>
         <!-- 진행 중 운영진의 참가자 추가 칸이 여기로 옮겨진다 -->
         <div id="bracket-add-host"></div>
         <p class="mt-4 text-center text-xs text-zinc-400 dark:text-zinc-500">화면은 몇 초마다 자동으로 새로 고쳐집니다.</p>
@@ -229,6 +229,7 @@
 
     // ---------- 그리기 ----------
     function render() {
+        if (dragging) return;   // 끌어 놓는 중에는 카드가 사라지지 않게 잠시 미룬다
         const t = tournament;
         baseTitle = `${t.name} · POWERDRIVE HANYANG`;
         document.title = baseTitle;
@@ -351,34 +352,77 @@
             $('admin-tools').innerHTML = `
                 <span class="font-semibold text-zinc-500 dark:text-zinc-400">${escapeHtml(groupName(activeGroup))} 운영</span>
                 ${b && b.rounds >= 1 ? (locked ? '<span class="text-zinc-400">결과가 확정되어 대진은 고정</span>'
-                    : `${button(editMode ? '대진 수정 끝' : '대진 수정', 'data-edit', editMode ? 'primary' : 'ghost')}${button('무작위 재배치', 'data-rebuild="random"')}${button('부수 순 재배치', 'data-rebuild="division"')}`) : ''}
+                    : `${button(editMode ? '대진 수정 끝' : '대진 수정', 'data-edit', editMode ? 'primary' : 'ghost')}${button('무작위 재배치', 'data-rebuild="random"')}`) : ''}
                 ${b && b.rounds >= 2 ? button(b.third ? '3·4위전 취소' : '3·4위전 진행', `data-third="${b.third ? 'off' : 'on'}"`, b.third ? 'ghost' : 'primary') : '<span class="text-zinc-400">3·4위전 없음(준결승 없음)</span>'}
                 <label class="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-300">5판 3선 전환
                     <select id="best-of-from" class="select-chevron select-chevron-sm h-8 rounded-lg border border-zinc-200 bg-white pl-2.5 pr-8 text-xs font-semibold text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
                         ${[[0, '전환 없음'], [2, '결승부터'], [4, '준결승부터'], [8, '8강부터'], [16, '16강부터']].map(([v, l]) => `<option value="${v}" ${v === from ? 'selected' : ''}>${l}</option>`).join('')}
-                    </select></label>`;
+                    </select></label>
+                ${editMode ? '<span class="basis-full text-center text-zinc-500 dark:text-zinc-400">이름을 끌어 다른 자리에 놓으면 자리가 바뀝니다 · 폰에서는 꾹 누른 뒤 끌기 · 빈 자리는 부전승</span>' : ''}`;
         }
         if (!b || b.rounds === 0) {
             $('rounds').innerHTML = `<div class="w-full rounded-2xl border border-dashed border-zinc-300 py-10 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
                 ${b && b.champion ? `참가자가 한 명이라 <strong class="text-zinc-900 dark:text-zinc-100">${escapeHtml(b.champion)}</strong>이(가) 자동으로 우승했습니다.` : '이 그룹에는 대진이 없습니다.'}</div>`;
             return;
         }
+        $('rounds').innerHTML = renderTree(b);
+    }
+
+    // ---------- 대진표: 왼쪽 1라운드에서 오른쪽 결승으로 이어지는 나무 모양 ----------
+    // 부전승은 카드를 그리지 않고 그 선수를 다음 라운드 카드에 바로 올린다. 각 경기는 아래에 달린 선수 수만큼 세로 공간을 차지하므로
+    // 9명이면 예선 1경기 + 8강 4경기가 촘촘하게 놓인다. 수정 모드에서는 1라운드의 빈 자리까지 모두 보여 끌어 놓을 수 있게 한다.
+    const BK = { pitch: 58, cardW: 176, gap: 32, cardH: 92 };
+    function renderTree(b) {
+        const edit = editMode && canAdmin;
         const byId = Object.fromEntries(b.matches.map((m) => [m.id, m]));
-        const columns = [];
-        for (let r = 1; r <= b.rounds; r++) {
-            const matches = b.matches.filter((m) => m.round === r);
-            // 결승 열 아래에 3·4위전
-            const third = r === b.rounds && b.third ? `<p class="mt-2 text-center text-xs font-bold text-zinc-500 dark:text-zinc-400">3·4위전</p>${renderMatch(b.third, byId, b)}` : '';
-            columns.push(`<div class="flex w-64 flex-shrink-0 flex-col gap-3 sm:w-72">
-                <p class="text-center text-xs font-bold text-zinc-500 dark:text-zinc-400">${escapeHtml(b.labels[r])}</p>
-                ${matches.map((m) => renderMatch(m, byId, b)).join('')}${third}
-            </div>`);
-        }
-        $('rounds').innerHTML = columns.join('');
+        const rounds = [];
+        for (let r = 1; r <= b.rounds; r++) rounds.push(b.matches.filter((m) => m.round === r).sort((x, y) => x.index - y.index));
+        const leaves = {}, shown = {}, center = {};
+        rounds[0].forEach((m) => { const n = m.players.filter(Boolean).length; shown[m.id] = edit || n === 2; leaves[m.id] = edit ? 2 : Math.max(n, 1); });
+        for (let r = 1; r < b.rounds; r++) rounds[r].forEach((m) => { shown[m.id] = true; leaves[m.id] = rounds[r - 1].filter((c) => c.next === m.id).reduce((sum, c) => sum + leaves[c.id], 0); });
+        let y = 0;
+        rounds[0].forEach((m) => { center[m.id] = y + leaves[m.id] * BK.pitch / 2; y += leaves[m.id] * BK.pitch; });
+        const total = y;
+        for (let r = 1; r < b.rounds; r++) rounds[r].forEach((m) => {
+            const kids = rounds[r - 1].filter((c) => c.next === m.id).sort((p, q) => p.slot - q.slot);
+            const top = center[kids[0].id] - leaves[kids[0].id] * BK.pitch / 2;
+            center[m.id] = top + leaves[m.id] * BK.pitch / 2;
+        });
+        const colX = (r) => (r - 1) * (BK.cardW + BK.gap);
+        const width = b.rounds * BK.cardW + (b.rounds - 1) * BK.gap;
+        const thirdTop = total + 16;
+        const height = total + (b.third ? 16 + 20 + BK.cardH + 24 : 8);
+
+        const players = rounds[0].reduce((sum, m) => sum + m.players.filter(Boolean).length, 0);
+        const byes = rounds[0].filter((m) => m.players.filter(Boolean).length === 1).length;
+        const headers = rounds.map((_, i) => {
+            const r = i + 1;
+            const first = r === 1 && byes > 0;
+            const label = first && !edit ? `${players}강` : b.labels[r];
+            const sub = first ? (edit ? '빈 자리는 부전승' : `부전승 ${byes}명`) : '';
+            return `<div class="flex-shrink-0 text-center" style="width:${BK.cardW}px;margin-right:${r < b.rounds ? BK.gap : 0}px">
+                <p class="text-xs font-bold text-zinc-500 dark:text-zinc-400">${escapeHtml(label)}</p>
+                ${sub ? `<p class="text-[11px] text-zinc-400 dark:text-zinc-500">${escapeHtml(sub)}</p>` : '<p class="text-[11px]">&nbsp;</p>'}
+            </div>`;
+        }).join('');
+
+        const paths = b.matches.filter((m) => shown[m.id] && m.next).map((m) => {
+            const x1 = colX(m.round) + BK.cardW, xm = x1 + BK.gap / 2, x2 = colX(m.round + 1);
+            return `<path d="M${x1} ${center[m.id]}H${xm}V${center[m.next]}H${x2}"/>`;
+        }).join('');
+        const cards = b.matches.filter((m) => shown[m.id]).map((m) => `<div class="absolute -translate-y-1/2" style="left:${colX(m.round)}px;top:${center[m.id]}px;width:${BK.cardW}px">${edit && m.round === 1 ? renderEditableMatch(m) : renderMatch(m, byId, b)}</div>`).join('');
+        const third = b.third ? `<div class="absolute" style="left:${colX(b.rounds)}px;top:${thirdTop}px;width:${BK.cardW}px">
+            <p class="mb-1 text-center text-xs font-bold text-zinc-500 dark:text-zinc-400">3·4위전</p>${renderMatch(b.third, byId, b)}</div>` : '';
+        return `<div class="mx-auto" style="width:${width}px">
+            <div class="mb-2 flex">${headers}</div>
+            <div class="relative" style="height:${height}px">
+                <svg class="absolute inset-0 text-zinc-300 dark:text-zinc-600" width="${width}" height="${height}" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">${paths}</svg>
+                ${cards}${third}
+            </div>
+        </div>`;
     }
 
     function renderMatch(m, byId, b) {
-        if (editMode && m.round === 1 && !m.third) return renderEditableMatch(m, b);
         const chip = {
             waiting: ['대기', 'text-zinc-400 dark:text-zinc-500'],
             pending: ['경기 가능', 'text-red-600 dark:text-red-400'],
@@ -389,45 +433,118 @@
         const row = (name, i) => {
             const isWinner = m.winner && name === m.winner;
             const wins = m.games ? m.games.filter(([a, c]) => (i === 0 ? a > c : c > a)).length : null;
-            return `<div class="flex items-center justify-between gap-2 px-3 py-2 ${i === 0 ? 'border-b border-zinc-100 dark:border-zinc-800' : ''}">
+            return `<div class="flex h-8 items-center justify-between gap-2 px-2.5 ${i ? 'border-t border-zinc-100 dark:border-zinc-800' : ''}">
                 <span class="flex min-w-0 items-baseline gap-1.5">
-                    <span class="truncate text-sm ${isWinner ? 'font-extrabold text-red-600 dark:text-red-400' : name ? 'font-semibold' : 'font-medium text-zinc-400 dark:text-zinc-500'} ${me && name === me.name ? 'underline decoration-red-300 decoration-2 underline-offset-2' : ''}">${escapeHtml(name || '미정')}</span>
+                    <span data-name class="truncate text-sm ${isWinner ? 'font-extrabold text-red-600 dark:text-red-400' : name ? 'font-semibold' : 'font-medium text-zinc-400 dark:text-zinc-500'} ${me && name === me.name ? 'underline decoration-red-300 decoration-2 underline-offset-2' : ''}">${escapeHtml(name || '미정')}</span>
                     ${name ? `<span class="flex-shrink-0 text-[11px] text-zinc-400 dark:text-zinc-500">${escapeHtml(divisionOf(name))}</span>` : ''}
                 </span>
                 ${wins !== null ? `<span class="text-sm font-extrabold tabular-nums ${isWinner ? 'text-red-600 dark:text-red-400' : 'text-zinc-400'}">${wins}</span>` : ''}
             </div>`;
         };
         const canReset = m.status === 'confirmed' && (m.third || !m.next || !['confirmed', 'bye'].includes(byId[m.next].status));
+        const iconButton = (icon, label, attrs, style) => `<button type="button" ${attrs} title="${label}" aria-label="${label}" class="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors ${style}"><i data-lucide="${icon}" class="h-3.5 w-3.5"></i></button>`;
+        const quiet = 'text-zinc-500 hover:bg-zinc-100 hover:text-red-600 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-red-400';
+        const strong = 'bg-red-600 text-white hover:bg-red-700 dark:bg-rubber dark:hover:bg-red-500';
         let controls = '';
         if (canAdmin && m.status === 'pending') {
-            controls = `<a href="${root.dataset.scoreboard}?league=${code}&match=${m.id}" class="inline-flex h-8 items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2.5 text-xs font-semibold text-zinc-700 hover:border-red-400 hover:text-red-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"><i data-lucide="trophy" class="h-3.5 w-3.5"></i>점수판</a>
-                ${m.report ? button('보고대로 확정', `data-confirm-report="${m.id}"`, 'primary') : ''}
-                ${button(m.report ? '다르게 입력' : '결과 입력', `data-confirm="${m.id}"`, m.report ? 'ghost' : 'primary')}`;
+            controls = `<a href="${root.dataset.scoreboard}?league=${code}&match=${m.id}" title="점수판으로 경기" aria-label="점수판으로 경기" class="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors ${quiet}"><i data-lucide="trophy" class="h-3.5 w-3.5"></i></a>
+                ${m.report ? iconButton('check', '보고대로 확정', `data-confirm-report="${m.id}"`, strong) : ''}
+                ${iconButton('pencil', m.report ? '다르게 입력' : '결과 입력', `data-confirm="${m.id}"`, m.report ? quiet : strong)}`;
         } else if (canAdmin && canReset) {
-            controls = button('되돌리기', `data-reset="${m.id}"`, 'quiet');
+            controls = iconButton('rotate-ccw', '되돌리기', `data-reset="${m.id}"`, quiet);
         }
         const report = m.report && m.status === 'pending'
-            ? `<p class="px-3 pb-2 text-xs text-amber-700 dark:text-amber-300"><strong>${escapeHtml(m.report.by)}</strong> 보고 · 승자 ${escapeHtml(m.report.winner)}${m.report.games ? ` (${m.report.games.map(([a, c]) => `${a}:${c}`).join(', ')})` : ''}</p>` : '';
-        return `<article class="rounded-xl border bg-white dark:bg-zinc-900 ${m.status === 'pending' ? 'border-red-200 dark:border-red-500/30' : 'border-zinc-200 dark:border-zinc-800'}">
-            <div class="flex items-center justify-between px-3 pt-2 text-[11px] font-semibold ${chip[1]}"><span>${chip[0]}<span class="ml-1.5 font-medium text-zinc-400 dark:text-zinc-500">${m.best_of}판 ${Math.floor(m.best_of / 2) + 1}선</span></span>${games ? `<span class="tabular-nums text-zinc-400 dark:text-zinc-500">${games}</span>` : ''}</div>
-            ${row(m.players[0], 0)}${row(m.players[1], 1)}
+            ? `<p class="border-t border-zinc-100 px-2.5 py-1 text-[11px] leading-4 text-amber-700 dark:border-zinc-800 dark:text-amber-300"><strong>${escapeHtml(m.report.by)}</strong> 보고 · 승자 ${escapeHtml(m.report.winner)}${m.report.games ? ` (${m.report.games.map(([a, c]) => `${a}:${c}`).join(', ')})` : ''}</p>` : '';
+        return `<article data-match="${m.id}" class="rounded-xl border bg-white shadow-sm dark:bg-zinc-900 ${m.status === 'pending' ? 'border-red-300 dark:border-red-500/40' : 'border-zinc-200 dark:border-zinc-800'}">
+            <div class="flex h-6 items-center justify-between gap-1 px-2.5 text-[11px] font-semibold leading-none ${chip[1]}">
+                <span class="truncate">${chip[0]}<span class="ml-1.5 font-medium text-zinc-400 dark:text-zinc-500">${m.best_of}판 ${Math.floor(m.best_of / 2) + 1}선</span></span>
+                ${controls ? `<span class="flex flex-shrink-0 items-center gap-0.5">${controls}</span>` : ''}
+            </div>
+            <div class="border-t border-zinc-100 dark:border-zinc-800">${row(m.players[0], 0)}${row(m.players[1], 1)}</div>
+            ${games ? `<p class="border-t border-zinc-100 px-2.5 py-1 text-[11px] leading-4 tabular-nums text-zinc-400 dark:border-zinc-800 dark:text-zinc-500">${games}</p>` : ''}
             ${report}
-            ${controls ? `<div class="flex flex-wrap gap-1.5 border-t border-zinc-100 px-3 py-2 dark:border-zinc-800">${controls}</div>` : ''}
         </article>`;
     }
 
-    // 수정 모드의 1라운드 카드: 각 자리에서 다른 선수를 고르면 두 사람의 자리가 바뀐다
-    function renderEditableMatch(m, b) {
-        const names = tournament.participants.filter((p) => p.group === activeGroup).map((p) => p.name);
+    // 수정 모드의 1라운드 카드: 두 자리를 모두 보여 주고, 이름을 끌어 다른 자리(빈 자리 포함)에 놓으면 자리가 바뀐다
+    function renderEditableMatch(m) {
         const slot = (name, i) => name
-            ? `<select data-swap="${escapeHtml(name)}" aria-label="${escapeHtml(name)} 자리 바꾸기" class="select-chevron select-chevron-sm h-8 w-full rounded-md border border-zinc-200 bg-white pl-2 pr-7 text-sm font-semibold dark:border-zinc-700 dark:bg-zinc-900">
-                ${names.map((n) => `<option value="${escapeHtml(n)}" ${n === name ? 'selected' : ''}>${escapeHtml(n)} · ${escapeHtml(divisionOf(n))}</option>`).join('')}</select>`
-            : '<span class="flex h-8 items-center px-2 text-sm text-zinc-400 dark:text-zinc-500">부전승 자리</span>';
-        return `<article class="rounded-xl border-2 border-dashed border-red-300 bg-white p-2 dark:border-red-500/40 dark:bg-zinc-900">
-            <div class="mb-1 px-1 text-[11px] font-semibold text-red-600 dark:text-red-400">대진 수정 · 다른 이름을 고르면 자리가 바뀝니다</div>
+            ? `<div data-slot data-match="${m.id}" data-index="${i}" data-drag="${escapeHtml(name)}" class="flex h-9 cursor-grab select-none items-center justify-between gap-2 rounded-lg border border-zinc-200 bg-white px-2.5 [-webkit-touch-callout:none] active:cursor-grabbing dark:border-zinc-700 dark:bg-zinc-900">
+                <span class="flex min-w-0 items-baseline gap-1.5"><span data-name class="truncate text-sm font-semibold">${escapeHtml(name)}</span><span class="flex-shrink-0 text-[11px] text-zinc-400 dark:text-zinc-500">${escapeHtml(divisionOf(name))}</span></span>
+                <i data-lucide="grip-vertical" class="h-4 w-4 flex-shrink-0 text-zinc-300 dark:text-zinc-600"></i>
+            </div>`
+            : `<div data-slot data-match="${m.id}" data-index="${i}" class="flex h-9 items-center justify-center rounded-lg border border-dashed border-zinc-300 text-xs text-zinc-400 dark:border-zinc-700 dark:text-zinc-500">부전승 자리</div>`;
+        return `<article data-match="${m.id}" class="rounded-xl border-2 border-dashed border-red-300 bg-red-50/40 p-1.5 dark:border-red-500/40 dark:bg-red-500/5">
             <div class="space-y-1">${slot(m.players[0], 0)}${slot(m.players[1], 1)}</div>
         </article>`;
     }
+
+    // ---------- 대진 수정: 이름을 끌어 다른 자리에 놓는다 (마우스는 바로, 손가락은 꾹 누른 뒤) ----------
+    let dragging = false;
+    (function setupDrag() {
+        const rounds = $('rounds');
+        let d = null;
+        const HIGHLIGHT = ['ring-2', 'ring-red-500', 'ring-offset-1', 'dark:ring-offset-zinc-950'];
+        const targetAt = (x, y) => {
+            const el = document.elementFromPoint(x, y);
+            const slot = el && el.closest('[data-slot]');
+            return slot && rounds.contains(slot) && slot !== d.row ? slot : null;
+        };
+        function begin(x, y) {
+            d.active = true; dragging = true;
+            const rect = d.row.getBoundingClientRect();
+            d.ghost = d.row.cloneNode(true);
+            d.ghost.removeAttribute('data-slot'); d.ghost.removeAttribute('data-drag');
+            d.ghost.className = 'pointer-events-none fixed z-[70] flex items-center justify-between gap-2 rounded-lg border border-red-400 bg-white px-2.5 shadow-xl dark:border-red-500 dark:bg-zinc-900';
+            d.ghost.style.width = `${rect.width}px`; d.ghost.style.height = `${rect.height}px`;
+            document.body.appendChild(d.ghost);
+            d.row.classList.add('opacity-40');
+            if (navigator.vibrate) navigator.vibrate(10);
+            move(x, y);
+        }
+        function move(x, y) {
+            d.ghost.style.left = `${x - d.offX}px`; d.ghost.style.top = `${y - d.offY}px`;
+            const target = targetAt(x, y);
+            if (target === d.target) return;
+            if (d.target) d.target.classList.remove(...HIGHLIGHT);
+            d.target = target;
+            if (d.target) d.target.classList.add(...HIGHLIGHT);
+        }
+        function end(commit) {
+            clearTimeout(d.timer);
+            if (d.active) {
+                d.ghost.remove();
+                d.row.classList.remove('opacity-40');
+                if (d.target) d.target.classList.remove(...HIGHLIGHT);
+                if (commit && d.target) act(`/brackets/${activeGroup}/move`, { name: d.name, match: d.target.dataset.match, slot: Number(d.target.dataset.index) }, '자리를 옮겼습니다');
+            }
+            d = null; dragging = false;
+        }
+        rounds.addEventListener('pointerdown', (e) => {
+            const row = e.target.closest('[data-drag]');
+            if (!row || !editMode || d) return;
+            if (e.pointerType === 'mouse' && e.button !== 0) return;
+            const rect = row.getBoundingClientRect();
+            d = { row, name: row.dataset.drag, id: e.pointerId, x: e.clientX, y: e.clientY, offX: e.clientX - rect.left, offY: e.clientY - rect.top,
+                  touch: e.pointerType !== 'mouse', active: false, target: null, ghost: null, timer: null };
+            if (d.touch) d.timer = setTimeout(() => { if (d && !d.active) begin(d.x, d.y); }, 350);   // 꾹 누르기
+        });
+        document.addEventListener('pointermove', (e) => {
+            if (!d || e.pointerId !== d.id) return;
+            if (!d.active) {
+                const dist = Math.hypot(e.clientX - d.x, e.clientY - d.y);
+                if (d.touch) { if (dist > 8) end(false); return; }   // 꾹 누르기 전에 움직였으면 스크롤하려는 것
+                if (dist < 4) return;
+                begin(e.clientX, e.clientY);
+            }
+            move(e.clientX, e.clientY);
+        });
+        // 끌기가 시작된 뒤에는 손가락 이동이 화면 스크롤로 새지 않게 막는다
+        document.addEventListener('touchmove', (e) => { if (d && d.active) e.preventDefault(); }, { passive: false });
+        document.addEventListener('pointerup', (e) => { if (d && e.pointerId === d.id) end(true); });
+        document.addEventListener('pointercancel', (e) => { if (d && e.pointerId === d.id) end(false); });
+        rounds.addEventListener('contextmenu', (e) => { if (editMode && e.target.closest('[data-drag]')) e.preventDefault(); });
+    })();
 
     // ---------- 참가자 추가 (운영진) ----------
     let editMode = false;
@@ -537,7 +654,7 @@
         if (!el) return;
         if (el.hasAttribute('data-sound')) { soundOn = !soundOn; storage.set('league_sound', soundOn ? 'on' : 'off'); renderPendingPanel(pendingReports(tournament)); if (soundOn) beep(); return; }
         if (el.hasAttribute('data-edit')) { editMode = !editMode; render(); return; }
-        if (el.dataset.rebuild) { if (confirm(`${groupName(activeGroup)} 대진표를 ${el.dataset.rebuild === 'random' ? '무작위로' : '부수 순으로'} 다시 만들까요?`)) act(`/brackets/${activeGroup}/rebuild`, { seed: el.dataset.rebuild }, '대진표를 다시 만들었습니다'); return; }
+        if (el.dataset.rebuild) { if (confirm(`${groupName(activeGroup)} 대진표를 무작위로 다시 만들까요?`)) act(`/brackets/${activeGroup}/rebuild`, { seed: el.dataset.rebuild }, '대진표를 다시 만들었습니다'); return; }
         const find = (id) => Object.values(tournament.brackets).flatMap((b) => b.matches.concat(b.third ? [b.third] : [])).find((m) => m.id === id);
         if (el.dataset.third) { act('/third-place', { group: activeGroup, enabled: el.dataset.third === 'on' }, el.dataset.third === 'on' ? '3·4위전을 추가했습니다' : '3·4위전을 뺐습니다'); return; }
         if (el.dataset.group) { activeGroup = el.dataset.group; render(); }
@@ -556,8 +673,6 @@
         const select = e.target.closest('[data-move]');
         if (select) act('/participants', { name: select.dataset.move, group: select.value }, '그룹을 바꿨습니다');
         if (e.target.id === 'best-of-from') act('/settings', { best_of_from: Number(e.target.value) }, '5판 3선 전환 시점을 바꿨습니다');
-        const swap = e.target.closest('[data-swap]');
-        if (swap && swap.value !== swap.dataset.swap) act(`/brackets/${activeGroup}/swap`, { a: swap.dataset.swap, b: swap.value }, '자리를 바꿨습니다');
     });
     $('admin-login').addEventListener('submit', async (e) => {
         e.preventDefault();
