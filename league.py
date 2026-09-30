@@ -9,8 +9,8 @@
 - '토너먼트로그': 참가·결과 보고·운영 기록을 한 줄씩 덧붙이기만 한다(append-only). 이것이 원본이다.
   덧붙이기는 동시에 여러 건이 와도 서로 덮어쓰지 않는다.
 - '토너먼트': 방마다 한 줄. 운영 기록을 적용한 상태(JSON)를 저장해 두는 스냅숏이다 — 대진표, 확정 결과, 그룹 조정.
-운영진 동작은 로그 한 줄과 스냅숏을 한 번의 호출로 함께 쓴다. 운영진 두 명이 거의 동시에 저장하면 나중 스냅숏이
-앞 스냅숏을 덮을 수 있지만, 스냅숏에 없는 운영 기록은 읽을 때 다시 적용하므로 변경이 사라지지 않는다.
+운영진 동작은 먼저 로그에 한 줄 덧붙이고(이 순간 확정) 그다음 스냅숏을 고친다. 운영진 두 명이 거의 동시에 저장하면
+나중 스냅숏이 앞 스냅숏을 덮을 수 있지만, 스냅숏에 없는 운영 기록은 읽을 때 다시 적용하므로 변경이 사라지지 않는다.
 """
 import copy
 import hashlib
@@ -66,7 +66,6 @@ _cache = {"rows": None, "logs": None, "expires_at": 0.0}
 _writes = deque()
 _admin_logins = deque()
 _sheets_ready = False
-_sheet_ids = {}
 RANGES = [f"'{TOURNAMENT_SHEET}'!A:F", f"'{LOG_SHEET}'!A:D"]
 ROOM_LIST_LIMIT = 30      # 참가 화면에 보여 주는 방 수
 FINISHED_ROOM_DAYS = 2    # 끝난 방은 이틀까지만 목록에 남긴다
@@ -83,19 +82,15 @@ def _spreadsheet():
 
 
 def _ensure_sheets():
-    # 두 시트가 있는지는 인스턴스마다 한 번만 확인하고(메타데이터 호출 1회), 없으면 만든다.
-    # 시트 번호(sheetId)도 이때 기억해 둔다 — 운영 기록과 스냅숏을 한 번의 batchUpdate로 쓸 때 필요하다.
+    # 두 시트가 있는지는 인스턴스마다 한 번만 확인하고(메타데이터 호출 1회), 없으면 만든다
     global _sheets_ready
     if _sheets_ready:
         return
     spreadsheet = _spreadsheet()
-    existing = {ws.title: ws.id for ws in spreadsheet.worksheets()}
+    existing = {ws.title for ws in spreadsheet.worksheets()}
     for title, headers in ((TOURNAMENT_SHEET, TOURNAMENT_HEADERS), (LOG_SHEET, LOG_HEADERS)):
         if title not in existing:
-            worksheet = spreadsheet.add_worksheet(title=title, rows=1000, cols=len(headers))
-            worksheet.append_row(headers)
-            existing[title] = worksheet.id
-    _sheet_ids.update(existing)
+            spreadsheet.add_worksheet(title=title, rows=1000, cols=len(headers)).append_row(headers)
     _sheets_ready = True
 
 
@@ -164,30 +159,21 @@ def save_state(state):
     _invalidate()
 
 
-def _cells(values):
-    # batchUpdate용 한 줄. 문자열 그대로 넣는다 (values API의 RAW와 같다 — 숫자 코드도 글자로 남는다)
-    return {"values": [{"userEnteredValue": {"stringValue": str(v)}} for v in values]}
-
-
 def commit_op(state, op, joins=()):
-    # 운영 기록(과 함께 들어갈 참가 줄)을 로그에 덧붙이고 스냅숏 행을 고치는 일을 batchUpdate 한 번으로 한다.
-    # 한 번의 batchUpdate는 통째로 반영되거나 통째로 실패하므로 기록만 남고 스냅숏이 안 바뀌는 일은 없다.
+    # 운영 기록(과 함께 들어갈 참가 줄)을 로그에 덧붙이는 순간 확정된다. 덧붙이기는 values.append + INSERT_ROWS라
+    # 동시에 여러 건이 와도 건마다 새 행이 끼워져 서로 덮어쓰지 않는다. (batchUpdate의 appendCells는 동시에 오면
+    # 같은 행에 써서 한쪽이 사라진다 — 프리뷰에서 8건 동시에 보내 확인했다.)
+    # 스냅숏은 그다음에 고치는 사본이다. 저장이 실패하거나 다른 운영진의 저장에 덮여도 기록은 다음에 읽을 때 다시 적용된다.
     # 스냅숏은 행 번호로 고친다 (읽을 때 기억해 둔 것 — 방 행은 지우지 않으므로 밀리지 않는다).
-    _ensure_sheets()
-    now = kst_now()
-    entries = [("참가", j) for j in joins] + [("운영", op)]
+    append_logs(state, [("참가", j) for j in joins] + [("운영", op)])
     state["applied"].append(op["id"])
-    state["updated_at"] = now
+    state["updated_at"] = kst_now()
     row_no = state["_row_no"]
-    _spreadsheet().batch_update({"requests": [
-        {"appendCells": {"sheetId": _sheet_ids[LOG_SHEET], "fields": "userEnteredValue",
-                         "rows": [_cells([state["code"], kind, now, json.dumps(p, ensure_ascii=False)]) for kind, p in entries]}},
-        {"updateCells": {"range": {"sheetId": _sheet_ids[TOURNAMENT_SHEET], "startRowIndex": row_no - 1, "endRowIndex": row_no,
-                                   "startColumnIndex": 0, "endColumnIndex": len(TOURNAMENT_HEADERS)},
-                         "rows": [_cells(_row_values(state))], "fields": "userEnteredValue"}},
-    ]})
+    try:
+        _spreadsheet().values_update(f"'{TOURNAMENT_SHEET}'!A{row_no}:F{row_no}", _WRITE_PARAMS, {"values": [_row_values(state)]})
+    except Exception as e:
+        _deps["logger"].warning("리그전 스냅숏 저장 실패(운영 기록은 로그에 남음): %s", e)
     _invalidate()
-    state["rev"] = state.get("rev", 0) + len(entries)
 
 
 def append_logs(state, entries):

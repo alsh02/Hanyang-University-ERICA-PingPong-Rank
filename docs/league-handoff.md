@@ -12,7 +12,7 @@
 | 기술 | Flask 3 + Jinja + Tailwind Play CDN + lucide 1.44, Google Sheets(gspread 6.2), Vercel 서버리스 |
 | 리그전 데이터 파일 | 구글 시트 **`탁우회 토너먼트`** (시트 `토너먼트`, `토너먼트로그` 자동 생성) |
 | 리그전 시트 | `탁우회 토너먼트` 생성·공유 완료 (프리뷰에 테스트 방 '테스트1'·'테스트2'가 있음) |
-| 다음 단계 | 프리뷰에서 실사용 점검(특히 운영 기록 batchUpdate가 실제 시트에서 되는지) → 문제 없으면 `feature/league`를 main에 머지 |
+| 다음 단계 | 프리뷰에서 실사용 점검 → 문제 없으면 `feature/league`를 main에 머지 |
 
 ## 1. 시스템 구조도
 
@@ -114,7 +114,8 @@ flowchart TD
   * `운영` `{id, op, …}` — 운영진 동작 하나. `op`: `start, settings, third, rebuild, move, swap, confirm(players 포함), reset, group, remove, add`
 * 시트 `토너먼트` 열: `코드, 상태, 생성일시, 갱신일시, 상태JSON, 관리자코드`. 방 하나 = 한 행. 운영 기록을 적용한 **스냅숏**이고, 적용한 운영 기록 id를 `applied`에 모아 둔다.
   방을 지워도 행은 남기고 내용만 비운다(`상태=삭제`) — 행이 밀리면 다른 방의 저장이 엉뚱한 행을 덮기 때문.
-* **동시 저장 보호**(2026-09-30): 운영진 요청은 `load_state(force)` → `apply_op`로 지금 상태에 적용해 보고(안 되면 400, 아무것도 안 씀) → `commit_op`가 운영 기록 한 줄 덧붙이기 + 스냅숏 행 고치기를 **batchUpdate 한 번**(appendCells + updateCells, 원자적)으로 쓴다.
+* **동시 저장 보호**(2026-09-30): 운영진 요청은 `load_state(force)` → `apply_op`로 지금 상태에 적용해 보고(안 되면 400, 아무것도 안 씀) → `commit_op`가 운영 기록을 로그에 덧붙이고(**이 순간 확정**) 스냅숏 행을 고친다. 스냅숏 저장이 실패해도 요청은 성공으로 끝난다(기록이 로그에 있으므로).
+  덧붙이기는 반드시 `values.append` + `insertDataOption: INSERT_ROWS`로 한다 — 동시에 와도 건마다 새 행이 끼워진다(프리뷰에서 참가 16건 동시 확인). batchUpdate의 `appendCells`는 동시에 오면 같은 행에 써서 한쪽이 **사라진다**(프리뷰에서 8건 동시에 보내 2~5건 유실 확인) — 쓰지 말 것.
   두 운영진이 거의 동시에 저장하면 나중 스냅숏이 앞 스냅숏을 덮지만, 읽을 때 `assemble()`이 스냅숏의 `applied`에 없는 운영 기록을 로그 순서대로 다시 적용해 되살린다(지금 상태와 맞지 않는 기록 — 같은 경기를 둘이 확정 등 — 은 건너뜀).
   무작위 배치는 운영 기록 id를 씨앗으로 써서(`random.Random(id)`) 어느 인스턴스에서 다시 적용해도 같은 대진이 나오고, 동시에 추가된 참가자는 되살릴 때 함께 들어간다.
   이 보호가 생기기 전에는 '테스트1'에서 진행 중 동시 추가 24명 중 18명이 대진표에서 빠졌다(프리뷰 데이터로 확인, 가짜 서버에 지연을 넣어 재현).
@@ -148,7 +149,7 @@ flowchart TD
 | `rebuild_group` | 참가자 변경·재배치 시 그룹 대진표 새로 생성 |
 | `confirm_match` / `reset_match` / `validate_games` | 결과 확정·되돌리기·게임 점수 검증(점수는 항상 `players[0]:players[1]` 순서) |
 | `_editable_groups` | 확정 결과가 하나라도 있는 그룹은 대진 수정 거절 |
-| `new_op` / `apply_op` / `commit_op` / `_run` | 운영 기록 만들기 · 상태에 적용(요청 처리와 되살리기가 같은 함수) · 로그+스냅숏 한 번에 쓰기 · 라우트 공통 흐름 |
+| `new_op` / `apply_op` / `commit_op` / `_run` | 운영 기록 만들기 · 상태에 적용(요청 처리와 되살리기가 같은 함수) · 로그에 덧붙이고 스냅숏 고치기 · 라우트 공통 흐름 |
 | `assemble` / `compute_participants` / `refresh_derived` / `unplaced_players` | 스냅숏+로그 조립(되살리기 포함) · 참가자 목록 · 보고·대진표 밖 참가자 계산 |
 
 화면(`room.html`)의 `renderTree`: 경기마다 아래 달린 선수 수(leaves)만큼 세로 공간(pitch 58px), 카드 176px + 연결선 32px, SVG 연결선은 부전승 노드를 건너뛰어 다음 보이는 카드까지. 수정 모드(`[data-edit]`)에서는 1라운드의 빈 자리까지 모두 보이고 `[data-drag]` → `[data-slot]` 끌어 놓기(마우스 즉시, 터치는 350ms 꾹 누른 뒤, 스크롤 의도면 취소) → `POST /brackets/<g>/move`.
@@ -181,7 +182,7 @@ flowchart TD
 | `POST .../delete` | 운영 | 방 삭제(화면 버튼은 아직 없음) |
 
 오류: `LeagueError` → 지정 상태 코드 + `{error}`; 시트 없음 → 503 "'탁우회 토너먼트' 구글 시트를 찾을 수 없습니다…"; gspread APIError → 503.
-운영진 변경 API는 모두 시트 호출 2회(읽기 1 + batchUpdate 1), 참가·보고는 2회(읽기 1 + 덧붙이기 1).
+운영진 변경 API는 시트 호출 3회(읽기 1 + 운영 기록 덧붙이기 1 + 스냅숏 1), 참가·보고는 2회(읽기 1 + 덧붙이기 1), 새로 고침은 3초 캐시 밖에서 1회.
 
 ## 7. 결정 사항 로그 (사용자 요구 → 반영)
 
@@ -223,14 +224,14 @@ FAKE_LATENCY=0.25 PORT=5003 ./venv/bin/python fake_server.py &   # 시트 호출
 node check.js                                 # 기존 기능 회귀 29건 (새 서버에서 먼저 돌릴 것)
 ./venv/bin/python league-api-test.py          # API 흐름 94건
 node league-ui-test.js                        # 브라우저(퍼펫티어, 시스템 크롬) 54건: 운영진 2대 + 폰 4~5대
-./venv/bin/python league-calls-test.py        # 요청당 시트 호출 수(2회 이하)
+./venv/bin/python league-calls-test.py        # 요청당 시트 호출 수(새로 고침 1 · 참가 2 · 운영진 변경 3 이하)
 BASE=http://127.0.0.1:5003 ./venv/bin/python league-race-test.py   # 동시 요청 16~17건(동시 추가·확정·이동·보고, 시작과 참가 경합)
 node unplaced-ui.js                           # 대진표 밖 참가자 알림·넣기, 지연 서버에서 빠르게 연속 추가 7건
 node legacy-ui.js                             # 프리뷰 '테스트1' 데이터(예전 대진표 + 18명 누락)를 넣고 화면에서 복구 4건
 node tree-shot.js / touch-drag.js / bulk-add.js / viewer-shot.js   # 개별 화면 캡처·확인, 결과는 shots/ (touch-drag는 화면 밖 빈 자리로 자동 스크롤해 놓기)
 ```
 
-다시 만들 때: `/Users/alsh02/miniconda3/bin/python3 -m venv venv && ./venv/bin/pip install flask gspread google-auth`, `npm i puppeteer-core`. `fake_server.py`는 `sys.path`에 저장소 경로를 넣고 `app`을 import한 뒤 gspread를 가짜 클라이언트(부원 30명·경기기록·토너먼트 시트, batchUpdate의 appendCells/updateCells, 호출 수 카운터 `/__fake/calls`, 시트 내용 보기 `/__fake/league`, 줄 직접 넣기 `POST /__fake/league/append`)로 바꾼다. 시스템 python3.14의 venv는 pip이 깨져 있으니 miniconda 파이썬을 쓴다.
+다시 만들 때: `/Users/alsh02/miniconda3/bin/python3 -m venv venv && ./venv/bin/pip install flask gspread google-auth`, `npm i puppeteer-core`. `fake_server.py`는 `sys.path`에 저장소 경로를 넣고 `app`을 import한 뒤 gspread를 가짜 클라이언트(부원 30명·경기기록·토너먼트 시트, 실제처럼 동시에 오면 행을 덮는 batchUpdate appendCells, 호출 수 카운터 `/__fake/calls`, 시트 내용 보기 `/__fake/league`, 줄 직접 넣기 `POST /__fake/league/append`)로 바꾼다. 시스템 python3.14의 venv는 pip이 깨져 있으니 miniconda 파이썬을 쓴다.
 
 ## 9. 주의사항
 
@@ -239,12 +240,13 @@ node tree-shot.js / touch-drag.js / bulk-add.js / viewer-shot.js   # 개별 화�
 * Vercel 봇 검문(403 Security Checkpoint)은 우회하지 않는다.
 * iOS 사파리: `<select>` padding 무시(`.select-chevron`으로 해결), 전체화면에서 입력 시 경고(점수판은 입력 전 전체화면 해제), 프로그램으로 focus해도 키보드 안 뜸.
 * 폴링은 6초(+지터), 종료 20초, 화면 가려지면 운영진만 15초. 끌어 놓는 동안엔 다시 그리지 않는다.
-* 로컬에는 구글 키가 없어 batchUpdate(appendCells + updateCells) 형식은 가짜 서버로만 확인했다. 프리뷰에서 운영진 동작(추가·확정 등)이 되는지 먼저 본다. 확정 시험은 **게임 점수 없이** 승자만 — 점수가 있으면 실제 `경기기록`에 남는다.
+* 로컬에는 구글 키가 없다. 실제 시트 동작(동시 쓰기 등)은 프리뷰에서 시험 방을 만들어 확인하고 지운다(지운 방은 '삭제' 행으로 남음). 확정 시험은 **게임 점수 없이** 승자만 — 점수가 있으면 실제 `경기기록`에 남는다.
+* 가짜 서버는 지연을 주지 않으면(`FAKE_LATENCY` 없음) 동시성 문제가 재현되지 않는다. 시트 쓰기 방식을 바꾸면 지연 서버로 `league-race-test.py`를 돌리고, 프리뷰에서도 동시 요청으로 로그 줄 수(`rev`)가 요청 수만큼 느는지 본다.
 
 ## 10. 남은 일 · 아이디어
 
 * [x] 사용자: `탁우회 토너먼트` 시트 생성·공유 (프리뷰에 테스트 방 2개).
-* [ ] 프리뷰에서 운영진 동작이 실제 시트에 쓰이는지(batchUpdate) 확인 → '테스트1' 운영 화면에서 그룹마다 '대진표에 넣기'로 빠진 18명 복구.
+* [ ] '테스트1' 운영 화면에서 그룹마다 '대진표에 넣기'로 빠진 18명 복구 (관리자 코드는 시트 `토너먼트` F열).
 * [ ] 프리뷰에서 실제 시트로 개설~종료 한 번 점검.
 * [ ] 실제 아이폰·아이패드에서 꾹 누른 뒤 끌기 확인(에뮬레이터로만 검증함).
 * [ ] `feature/league` → main 머지(머지 전 README 확인).
