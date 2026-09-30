@@ -1,6 +1,6 @@
 # 리그전(토너먼트) 기능 인수인계 문서
 
-기준: 2026-09-30, 브랜치 `feature/league` 최신 커밋 `f0a7cff` (main보다 18커밋 앞, **아직 main에 머지하지 않음**).
+기준: 2026-09-30, 브랜치 `feature/league` (**아직 main에 머지하지 않음**). 마지막 갱신: 동시 저장 보호(운영 기록 로그) · 대진표 밖 참가자 알림 · 끌기 자동 스크롤.
 다른 세션·다른 사람이 이 문서만 읽고 이어서 작업할 수 있도록 지금까지의 논의와 구조를 정리했다.
 
 ## 0. 한눈에 보기
@@ -11,8 +11,8 @@
 | 프리뷰 | https://powerdrive-hanyang-git-feature-league-alsh02.vercel.app (feature/league 푸시 시 자동) |
 | 기술 | Flask 3 + Jinja + Tailwind Play CDN + lucide 1.44, Google Sheets(gspread 6.2), Vercel 서버리스 |
 | 리그전 데이터 파일 | 구글 시트 **`탁우회 토너먼트`** (시트 `토너먼트`, `토너먼트로그` 자동 생성) |
-| 사용자가 아직 해야 할 일 | 드라이브에 `탁우회 토너먼트` 시트를 만들고 서비스 계정(`탁우회_명단` 공유 목록의 …@…iam.gserviceaccount.com)에 **편집자**로 공유. 전까지는 개설·목록이 503 안내를 낸다 |
-| 다음 단계 | 프리뷰에서 실사용 점검 → 문제 없으면 `feature/league`를 main에 머지 |
+| 리그전 시트 | `탁우회 토너먼트` 생성·공유 완료 (프리뷰에 테스트 방 '테스트1'·'테스트2'가 있음) |
+| 다음 단계 | 프리뷰에서 실사용 점검(특히 운영 기록 batchUpdate가 실제 시트에서 되는지) → 문제 없으면 `feature/league`를 main에 머지 |
 
 ## 1. 시스템 구조도
 
@@ -58,6 +58,7 @@ flowchart LR
 
 * `app.py`가 시트 연결·부원 명단·경기기록을 갖고, `league.configure(**deps)`로 `league.py`에 필요한 함수만 넘긴다(순환 import 방지).
 * 서버리스라 인스턴스마다 메모리 캐시가 따로 있다. 시트 읽기 쿼터(분당 60회)를 넘지 않도록 요청당 읽기 1회(3초 캐시)·쓰기 1회로 설계했다.
+* 여러 요청이 동시에 와도 변경이 사라지지 않게, 모든 변경은 `토너먼트로그`에 한 줄로 **덧붙인다**(4·5절). 방 행은 그 결과를 저장해 둔 스냅숏이다.
 
 ## 2. 리그전 흐름도
 
@@ -107,10 +108,19 @@ flowchart TD
 
 ## 4. 데이터 저장 구조
 
-* 시트 `토너먼트` 열: `코드, 상태, 생성일시, 갱신일시, 상태JSON, 관리자코드`. 방 하나 = 한 행. 운영진 동작만 이 행을 덮어쓴다.
-* 시트 `토너먼트로그` 열: `코드, 종류, 시각, 내용JSON`. 참가·결과 보고는 **추가만** 한다(여러 폰이 동시에 써도 충돌 없음). 상태를 읽을 때 로그를 합쳐 `assemble()`로 조립한다.
-* 상태JSON 주요 키: `code, name, status(lobby|running|finished), format{target,best_of,best_of_from}, seed(random|division), groups[{key,name,min,max}], group_overrides, removed[], brackets{group: bracket}, admin_key, admin_code, created_at, updated_at, finished_at`.
-  화면에는 `public_view()`로 `admin_key, admin_code, _tokens, _row_no`를 뺀 것만, 보기 전용에는 `code`까지 뺀 것만 보낸다.
+* 시트 `토너먼트로그` 열: `코드, 종류, 시각, 내용JSON`. **원본**. 덧붙이기만 한다(여러 폰·여러 운영진이 동시에 써도 서로 덮어쓰지 않음). 종류:
+  * `참가` `{name, division, token, by?}` — 본인 참가(토큰) 또는 운영진 등록(`by: 운영진`, 토큰 없음)
+  * `보고` `{match, players, winner, games, by}` — 선수 결과 보고. `players`(그때의 대진)가 지금 대진과 다르면 그 보고는 숨는다
+  * `운영` `{id, op, …}` — 운영진 동작 하나. `op`: `start, settings, third, rebuild, move, swap, confirm(players 포함), reset, group, remove, add`
+* 시트 `토너먼트` 열: `코드, 상태, 생성일시, 갱신일시, 상태JSON, 관리자코드`. 방 하나 = 한 행. 운영 기록을 적용한 **스냅숏**이고, 적용한 운영 기록 id를 `applied`에 모아 둔다.
+  방을 지워도 행은 남기고 내용만 비운다(`상태=삭제`) — 행이 밀리면 다른 방의 저장이 엉뚱한 행을 덮기 때문.
+* **동시 저장 보호**(2026-09-30): 운영진 요청은 `load_state(force)` → `apply_op`로 지금 상태에 적용해 보고(안 되면 400, 아무것도 안 씀) → `commit_op`가 운영 기록 한 줄 덧붙이기 + 스냅숏 행 고치기를 **batchUpdate 한 번**(appendCells + updateCells, 원자적)으로 쓴다.
+  두 운영진이 거의 동시에 저장하면 나중 스냅숏이 앞 스냅숏을 덮지만, 읽을 때 `assemble()`이 스냅숏의 `applied`에 없는 운영 기록을 로그 순서대로 다시 적용해 되살린다(지금 상태와 맞지 않는 기록 — 같은 경기를 둘이 확정 등 — 은 건너뜀).
+  무작위 배치는 운영 기록 id를 씨앗으로 써서(`random.Random(id)`) 어느 인스턴스에서 다시 적용해도 같은 대진이 나오고, 동시에 추가된 참가자는 되살릴 때 함께 들어간다.
+  이 보호가 생기기 전에는 '테스트1'에서 진행 중 동시 추가 24명 중 18명이 대진표에서 빠졌다(프리뷰 데이터로 확인, 가짜 서버에 지연을 넣어 재현).
+* 상태JSON 주요 키: `code, name, status(lobby|running|finished), format{target,best_of,best_of_from}, seed(random|division), groups[{key,name,min,max}], group_overrides, removed[], brackets{group: bracket}, applied[], admin_key, admin_code, created_at, updated_at, finished_at`.
+  화면에는 `public_view()`로 `admin_key, admin_code, applied`와 밑줄로 시작하는 내부 값(`_tokens, _joins, _reports, _row_no`)을 뺀 것만, 보기 전용에는 `code`까지 뺀 것만 보낸다.
+  매번 계산해 붙이는 값: `participants`, 경기별 `report`, `unplaced`(그룹 대진표에 자리가 없는 참가자), `rev`(이 방의 로그 줄 수 — 화면은 지금보다 작은 `rev`의 응답을 버린다).
 * 참가자는 로그의 `참가` 항목으로 만들고(`added_by_admin`, 토큰), 같은 이름이 본인 폰으로 참가하면 토큰이 연결된다.
 * 보기 전용 키 = `sha256("view:" + admin_key)[:12]`. 저장 없이 항상 같고, 키로는 코드를 알 수 없다.
 * 상수: `CACHE_TTL=3`, `WRITE_LIMIT=240/10분`, `ADMIN_LOGIN_LIMIT=30/10분`, `ROOM_LIST_LIMIT=30`, `FINISHED_ROOM_DAYS=2`(종료 이틀 뒤 목록에서 제외).
@@ -138,8 +148,14 @@ flowchart TD
 | `rebuild_group` | 참가자 변경·재배치 시 그룹 대진표 새로 생성 |
 | `confirm_match` / `reset_match` / `validate_games` | 결과 확정·되돌리기·게임 점수 검증(점수는 항상 `players[0]:players[1]` 순서) |
 | `_editable_groups` | 확정 결과가 하나라도 있는 그룹은 대진 수정 거절 |
+| `new_op` / `apply_op` / `commit_op` / `_run` | 운영 기록 만들기 · 상태에 적용(요청 처리와 되살리기가 같은 함수) · 로그+스냅숏 한 번에 쓰기 · 라우트 공통 흐름 |
+| `assemble` / `compute_participants` / `refresh_derived` / `unplaced_players` | 스냅숏+로그 조립(되살리기 포함) · 참가자 목록 · 보고·대진표 밖 참가자 계산 |
 
 화면(`room.html`)의 `renderTree`: 경기마다 아래 달린 선수 수(leaves)만큼 세로 공간(pitch 58px), 카드 176px + 연결선 32px, SVG 연결선은 부전승 노드를 건너뛰어 다음 보이는 카드까지. 수정 모드(`[data-edit]`)에서는 1라운드의 빈 자리까지 모두 보이고 `[data-drag]` → `[data-slot]` 끌어 놓기(마우스 즉시, 터치는 350ms 꾹 누른 뒤, 스크롤 의도면 취소) → `POST /brackets/<g>/move`.
+끄는 동안은 손가락 스크롤을 막으므로 화면 위·아래 72px 안으로 끌면 저절로 스크롤한다(가장자리에 가까울수록 빠름) — 폰에서 9명 이상이면 1라운드 칸이 화면보다 길다.
+
+화면의 요청 처리: 변경 요청은 기기마다 한 번에 하나씩 차례로 보낸다(`serial`). 보내는 중에 온 자동 새로 고침과 `rev`가 더 작은 응답은 그리지 않는다(옮긴 이름이 잠깐 되돌아가 보이는 깜박임 방지).
+대진표 밖 참가자(`unplaced`)가 있으면 운영 도구 위에 이름과 '대진표에 넣기'(그 그룹을 개설 때 배치 방식으로 다시 짜기)가 뜨고, 다른 그룹 것은 그룹별 인원만 알린다. 본인 폰에는 '대진표에 아직 내 자리가 없습니다'.
 
 ## 6. API 목록
 
@@ -155,7 +171,7 @@ flowchart TD
 | `POST .../participants/add {names[]}` | 운영 | 명단에서 사전 등록(최대 100명/요청) |
 | `POST .../settings {best_of_from}` | 운영 | 5판 3선 전환 라운드 변경 |
 | `POST .../third-place {group, enabled}` | 운영 | 3·4위전 켜기/끄기 |
-| `POST .../brackets/<g>/rebuild {seed}` | 운영 | 그룹 대진 새로 생성(random|division) |
+| `POST .../brackets/<g>/rebuild {seed}` | 운영 | 그룹 대진 새로 생성(random|division). 대진표가 없는 그룹도 됨(대진표 밖 참가자 넣기) |
 | `POST .../brackets/<g>/move {name, match, slot}` | 운영 | 끌어 놓기 |
 | `POST .../brackets/<g>/swap {a, b}` | 운영 | 두 선수 교환(구 API, 유지) |
 | `POST .../start` | 운영 | 접수 마감 + 대진표 생성 |
@@ -165,6 +181,7 @@ flowchart TD
 | `POST .../delete` | 운영 | 방 삭제(화면 버튼은 아직 없음) |
 
 오류: `LeagueError` → 지정 상태 코드 + `{error}`; 시트 없음 → 503 "'탁우회 토너먼트' 구글 시트를 찾을 수 없습니다…"; gspread APIError → 503.
+운영진 변경 API는 모두 시트 호출 2회(읽기 1 + batchUpdate 1), 참가·보고는 2회(읽기 1 + 덧붙이기 1).
 
 ## 7. 결정 사항 로그 (사용자 요구 → 반영)
 
@@ -189,6 +206,9 @@ flowchart TD
 19. 대진 방식은 사용자 이미지대로 **아래에서 위로 짝짓기**(모두 1라운드 경기). 3·4위전 규칙도 이에 맞춤.
 20. 참가자 추가에 **일괄 추가 버튼**(검색 결과 전체 / 명단 전체, 인원 확인 후).
 21. '대진표 보기'는 **보기 전용 주소**로 열어 참가 코드가 드러나지 않게.
+22. (버그 수정) 진행 중 동시 추가로 대진표에서 사람이 빠지던 문제 → 운영진 동작도 로그에 덧붙이고 읽을 때 되살림. 같은 기기의 요청은 차례로.
+23. 대진표에 자리가 없는 참가자는 운영진에게 알리고 **'대진표에 넣기'**로 다시 짠다(예전 버전 데이터·시작 순간의 참가 대비).
+24. 폰에서 끌기 중 화면 가장자리 **자동 스크롤**(화면 밖 자리에도 놓을 수 있게).
 
 디자인 원칙(사용자 취향): 세로 막대·그라데이션·뱃지 같은 "AI틱한" 요소 대신 타이포·정렬로 위계, 중복 링크 금지, 사이트 톤(흰 카드·회색 선·빨강 강조, 다크 모드 `rubber`) 유지.
 
@@ -199,13 +219,18 @@ flowchart TD
 ```bash
 cd ~/.cache/claude-powerdrive-tests
 ./venv/bin/python fake_server.py &            # 가짜 구글 시트 + 앱, 포트 5002 (템플릿을 고치면 재시작)
+FAKE_LATENCY=0.25 PORT=5003 ./venv/bin/python fake_server.py &   # 시트 호출마다 0.25초 늦게 답하는 서버 (동시성 시험용)
+node check.js                                 # 기존 기능 회귀 29건 (새 서버에서 먼저 돌릴 것)
 ./venv/bin/python league-api-test.py          # API 흐름 94건
 node league-ui-test.js                        # 브라우저(퍼펫티어, 시스템 크롬) 54건: 운영진 2대 + 폰 4~5대
-node check.js                                 # 기존 기능 회귀 29건 (새 서버에서 먼저 돌릴 것)
-node tree-shot.js / touch-drag.js / bulk-add.js / viewer-shot.js   # 개별 화면 캡처·확인, 결과는 shots/
+./venv/bin/python league-calls-test.py        # 요청당 시트 호출 수(2회 이하)
+BASE=http://127.0.0.1:5003 ./venv/bin/python league-race-test.py   # 동시 요청 16~17건(동시 추가·확정·이동·보고, 시작과 참가 경합)
+node unplaced-ui.js                           # 대진표 밖 참가자 알림·넣기, 지연 서버에서 빠르게 연속 추가 7건
+node legacy-ui.js                             # 프리뷰 '테스트1' 데이터(예전 대진표 + 18명 누락)를 넣고 화면에서 복구 4건
+node tree-shot.js / touch-drag.js / bulk-add.js / viewer-shot.js   # 개별 화면 캡처·확인, 결과는 shots/ (touch-drag는 화면 밖 빈 자리로 자동 스크롤해 놓기)
 ```
 
-다시 만들 때: `/Users/alsh02/miniconda3/bin/python3 -m venv venv && ./venv/bin/pip install flask gspread google-auth`, `npm i puppeteer-core`. `fake_server.py`는 `sys.path`에 저장소 경로를 넣고 `app`을 import한 뒤 gspread를 가짜 클라이언트(부원 30명·경기기록·토너먼트 시트, 호출 수 카운터 `/__fake/calls`)로 바꾼다. 시스템 python3.14의 venv는 pip이 깨져 있으니 miniconda 파이썬을 쓴다.
+다시 만들 때: `/Users/alsh02/miniconda3/bin/python3 -m venv venv && ./venv/bin/pip install flask gspread google-auth`, `npm i puppeteer-core`. `fake_server.py`는 `sys.path`에 저장소 경로를 넣고 `app`을 import한 뒤 gspread를 가짜 클라이언트(부원 30명·경기기록·토너먼트 시트, batchUpdate의 appendCells/updateCells, 호출 수 카운터 `/__fake/calls`, 시트 내용 보기 `/__fake/league`, 줄 직접 넣기 `POST /__fake/league/append`)로 바꾼다. 시스템 python3.14의 venv는 pip이 깨져 있으니 miniconda 파이썬을 쓴다.
 
 ## 9. 주의사항
 
@@ -214,10 +239,13 @@ node tree-shot.js / touch-drag.js / bulk-add.js / viewer-shot.js   # 개별 화�
 * Vercel 봇 검문(403 Security Checkpoint)은 우회하지 않는다.
 * iOS 사파리: `<select>` padding 무시(`.select-chevron`으로 해결), 전체화면에서 입력 시 경고(점수판은 입력 전 전체화면 해제), 프로그램으로 focus해도 키보드 안 뜸.
 * 폴링은 6초(+지터), 종료 20초, 화면 가려지면 운영진만 15초. 끌어 놓는 동안엔 다시 그리지 않는다.
+* 로컬에는 구글 키가 없어 batchUpdate(appendCells + updateCells) 형식은 가짜 서버로만 확인했다. 프리뷰에서 운영진 동작(추가·확정 등)이 되는지 먼저 본다. 확정 시험은 **게임 점수 없이** 승자만 — 점수가 있으면 실제 `경기기록`에 남는다.
 
 ## 10. 남은 일 · 아이디어
 
-* [ ] 사용자: `탁우회 토너먼트` 시트 생성·공유 → 프리뷰에서 실제 시트로 개설~종료 한 번 점검.
+* [x] 사용자: `탁우회 토너먼트` 시트 생성·공유 (프리뷰에 테스트 방 2개).
+* [ ] 프리뷰에서 운영진 동작이 실제 시트에 쓰이는지(batchUpdate) 확인 → '테스트1' 운영 화면에서 그룹마다 '대진표에 넣기'로 빠진 18명 복구.
+* [ ] 프리뷰에서 실제 시트로 개설~종료 한 번 점검.
 * [ ] 실제 아이폰·아이패드에서 꾹 누른 뒤 끌기 확인(에뮬레이터로만 검증함).
 * [ ] `feature/league` → main 머지(머지 전 README 확인).
 * [ ] 아이디어(요청 없음): 화면에서 방 삭제 버튼(API는 있음), 명단에 없는 손님 참가, 동시 진행 대회 여러 개, 끌어 놓기의 키보드 대안, 종료된 대회 결과 보관·조회.
