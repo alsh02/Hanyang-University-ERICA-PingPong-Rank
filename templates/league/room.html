@@ -42,9 +42,14 @@
         <div id="lobby-add-host">
         <div id="add-participant" hidden class="relative mx-auto mt-5 max-w-md">
             <label for="add-input" class="mb-1.5 block text-xs font-semibold text-zinc-500 dark:text-zinc-400">참가자 추가 (명단에서 검색)</label>
-            <input id="add-input" type="text" role="combobox" aria-expanded="false" aria-controls="add-list" aria-autocomplete="list"
-                   autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="이름 또는 초성 · 누르면 바로 추가"
-                   class="h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-900 placeholder-zinc-400 focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/30 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder-zinc-500">
+            <div class="flex gap-2">
+                <input id="add-input" type="text" role="combobox" aria-expanded="false" aria-controls="add-list" aria-autocomplete="list"
+                       autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="이름 또는 초성 · 누르면 바로 추가"
+                       class="h-11 min-w-0 flex-1 rounded-xl border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-900 placeholder-zinc-400 focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/30 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder-zinc-500">
+                <!-- 검색된(검색어가 없으면 명단 전체) 미참가 부원을 한 번에 넣는다 -->
+                <button type="button" id="add-all" disabled
+                        class="h-11 flex-shrink-0 whitespace-nowrap rounded-xl border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition-colors hover:border-red-400 hover:text-red-700 disabled:cursor-not-allowed disabled:text-zinc-400 disabled:hover:border-zinc-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-red-500 dark:hover:text-red-300 dark:disabled:text-zinc-600">일괄 추가</button>
+            </div>
             <ul id="add-list" role="listbox" hidden aria-label="추가할 부원"
                 class="absolute left-0 right-0 top-full z-30 mt-1 max-h-60 overflow-y-auto overscroll-contain rounded-xl border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"></ul>
         </div>
@@ -578,9 +583,38 @@
             list.hidden = false; input.setAttribute('aria-expanded', 'true');
         }
         const close = () => { list.hidden = true; input.setAttribute('aria-expanded', 'false'); };
-        refreshAddList = () => { if (!list.hidden) open(input.value.trim()); };
+        // 일괄 추가: 검색어가 있으면 검색된 미참가 부원 전부, 없으면 명단의 미참가 부원 전부
+        const allButton = $('add-all');
+        const freeFor = (query) => {
+            const taken = new Set((tournament ? tournament.participants : []).map((p) => p.name));
+            return ROSTER.filter((m) => !taken.has(m.이름) && !pending.has(m.이름) && (!query || matchName(m.이름, query)));
+        };
+        function updateAllButton() {
+            const query = input.value.trim(), free = freeFor(query);
+            allButton.disabled = !free.length;
+            allButton.textContent = free.length ? `일괄 추가 · ${free.length}명` : '일괄 추가';
+            allButton.title = query ? `'${query}' 검색 결과 중 아직 참가하지 않은 부원을 모두 추가` : '명단에서 아직 참가하지 않은 부원을 모두 추가';
+        }
+        allButton.addEventListener('click', async () => {
+            const query = input.value.trim(), free = freeFor(query);
+            if (!free.length) return;
+            if (!confirm(query ? `'${query}' 검색 결과 ${free.length}명을 모두 추가할까요?` : `명단의 ${free.length}명을 모두 추가할까요?`)) return;
+            allButton.disabled = true; allButton.textContent = '추가 중…';
+            free.forEach((m) => pending.add(m.이름));
+            let added = 0;
+            for (let i = 0; i < free.length; i += 100) {   // 서버는 한 번에 100명까지
+                const chunk = free.slice(i, i + 100).map((m) => m.이름);
+                const data = await act('/participants/add', { names: chunk });
+                if (!data) break;
+                added += (data.added || chunk).length;
+            }
+            free.forEach((m) => pending.delete(m.이름));
+            if (added) showToast(`${added}명을 추가했습니다`);
+            refreshAddList(); updateAllButton();
+        });
+        refreshAddList = () => { if (!list.hidden) open(input.value.trim()); updateAllButton(); };
         input.addEventListener('focus', () => open(input.value.trim()));
-        input.addEventListener('input', () => open(input.value.trim()));
+        input.addEventListener('input', () => { open(input.value.trim()); updateAllButton(); });
         input.addEventListener('blur', close);
         input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
@@ -601,6 +635,7 @@
             const data = await act('/participants/add', { names: [member.이름] }, `${member.이름} 추가`);
             pending.delete(member.이름);
             open(input.value.trim());                                   // 성공하면 그 줄이 체크로 바뀐다
+            updateAllButton();
             if (data && document.activeElement === input) input.select();  // 다음 이름을 바로 덧쓸 수 있게 검색어를 선택해 둔다
         }
     })();
