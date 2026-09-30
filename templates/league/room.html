@@ -36,6 +36,9 @@
 
     <div id="notice" hidden class="mx-auto mb-5 max-w-2xl rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"></div>
 
+    <!-- 내 정보: 참가자 화면 맨 위. 그룹 카드가 길어져도 스크롤 없이 내 이름·그룹, 시작한 뒤에는 내 경기가 보인다. -->
+    <section id="me-card" hidden aria-label="내 정보" class="mx-auto mb-6 max-w-2xl"></section>
+
     <!-- 운영 키가 없는 기기: 관리자 코드로 연다 -->
     <form id="admin-login" hidden class="mx-auto mb-6 flex max-w-sm gap-2">
         <input id="admin-login-code" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="관리자 코드 6자리" autocomplete="off"
@@ -69,7 +72,6 @@
     <section id="bracket" hidden>
         <!-- 운영진·편성 중: 대진표를 고친 뒤 여기서 시작한다 -->
         <div id="draft-actions" hidden class="mx-auto mb-6 flex max-w-2xl flex-col items-center gap-2 text-center"></div>
-        <div id="my-match" hidden class="mx-auto mb-5 max-w-2xl"></div>
         <div id="champions" hidden class="mx-auto mb-5 max-w-3xl"></div>
         <!-- 운영진: 선수가 보낸 결과 중 아직 확정하지 않은 것 -->
         <div id="pending-reports" hidden class="mx-auto mb-4 max-w-3xl rounded-2xl border-2 border-amber-300 bg-amber-50 p-4 dark:border-amber-500/40 dark:bg-amber-500/10"></div>
@@ -303,8 +305,6 @@
         $('admin-login').hidden = !(isAdmin && !adminKey);
         $('admin-hint').hidden = isAdmin || isViewer || open;
         if (isAdmin && !adminKey) showNotice('이 기기에는 운영 권한이 없습니다. 관리자 코드를 넣어 주세요. 코드는 개설한 운영진 화면 상단에 있고, 잃어버렸으면 \'탁우회 토너먼트\' 구글 시트의 \'토너먼트\' 탭에서 볼 수 있습니다.');
-        else if (!isAdmin && !isViewer && !me && open) showNotice('아직 참가하지 않았습니다. 참가 페이지에서 코드를 넣고 이름을 고르세요.');
-        else if (!isAdmin && me && Object.values(t.unplaced || {}).some((names) => names.includes(me.name))) showNotice('대진표에 아직 내 자리가 없습니다. 운영진에게 알려 주세요.');
         else showNotice('');
 
         $('lobby').hidden = showBracket;
@@ -320,6 +320,7 @@
         $('bracket-people-host').hidden = !peopleHere;
         if (peopleHere && groupsBox.parentNode !== $('bracket-people-host')) $('bracket-people-host').appendChild(groupsBox);
         if (!peopleHere && groupsBox.parentNode !== $('lobby')) $('lobby').prepend(groupsBox);
+        renderMe(t);
         if (!showBracket || peopleHere) renderLobby(t);
         if (showBracket) { renderBracket(t); notifyNewReports(t); }
         notifyNewJoins(t);
@@ -367,7 +368,7 @@
             ? `<p class="text-sm text-zinc-500 dark:text-zinc-400">지금까지 <strong class="text-zinc-900 dark:text-zinc-100">${total}</strong>명이 들어왔습니다. 모두 들어왔으면 대진표를 만드세요.</p>
                <button type="button" id="draft-button" ${total < 2 ? 'disabled' : ''} class="${BIG_BUTTON}">대진표 만들기</button>
                <p class="text-xs text-zinc-400 dark:text-zinc-500">대진표를 확인하고 고친 뒤 시작합니다. 그때까지 참가는 계속 받습니다.</p>`
-            : `<p class="text-sm text-zinc-500 dark:text-zinc-400">${me ? `<strong class="text-zinc-900 dark:text-zinc-100">${escapeHtml(me.name)}</strong>으로 참가했습니다. ` : ''}${t.status === 'draft' ? '운영진이 대진표를 짜고 있습니다. 시작하면 대진표가 여기 나타납니다.' : '운영진이 시작하면 대진표가 여기 나타납니다.'}</p>`;
+            : '';
     }
     const BIG_BUTTON = 'mt-1 h-12 w-full max-w-xs rounded-xl bg-red-600 text-base font-bold text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:bg-rubber dark:hover:bg-red-500 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500';
 
@@ -412,24 +413,6 @@
             <div class="flex flex-wrap gap-x-6 gap-y-1">${done.map((k) => `<span class="flex items-baseline gap-2 text-sm"><span class="text-zinc-500 dark:text-zinc-400">${escapeHtml(groupName(k))}</span><strong class="text-lg font-extrabold text-red-600 dark:text-red-400">${escapeHtml(t.brackets[k].champion)}</strong></span>`).join('')}</div>
         </div>` : '';
 
-        // 내 다음 경기
-        const mine = me && !drafting && bracketKeys.flatMap((k) => t.brackets[k].matches.concat(t.brackets[k].third ? [t.brackets[k].third] : [])).find((m) => m.status === 'pending' && m.players.includes(me.name));
-        $('my-match').hidden = !mine;
-        if (mine) {
-            const b = t.brackets[mine.id.split('-')[0]];
-            const stage = mine.third ? '3·4위전' : b.labels[mine.round];
-            const reported = mine.report && mine.report.by === me.name;
-            $('my-match').innerHTML = `<div class="rounded-2xl border-2 border-red-600 bg-white p-4 dark:border-red-500/60 dark:bg-zinc-900">
-                <p class="text-xs font-semibold text-red-600 dark:text-red-400">내 다음 경기 · ${escapeHtml(groupName(mine.id.split('-')[0]))} ${escapeHtml(stage)} · ${mine.best_of}판 ${Math.floor(mine.best_of / 2) + 1}선</p>
-                <p class="mt-1 text-lg font-bold">${mine.players.map((p) => `<span class="${p === me.name ? 'text-red-600 dark:text-red-400' : ''}">${escapeHtml(p)}</span> <span class="text-xs font-medium text-zinc-400">${escapeHtml(divisionOf(p))}</span>`).join(' <span class="mx-1 text-sm font-medium text-zinc-400">vs</span> ')}</p>
-                ${reported ? `<p class="mt-2 text-sm text-zinc-500 dark:text-zinc-400">결과를 보냈습니다 (승자 ${escapeHtml(mine.report.winner)}). 운영진 확인을 기다리는 중입니다.</p>` : ''}
-                <div class="mt-3 flex flex-wrap gap-2">
-                    <a href="${root.dataset.scoreboard}?league=${code}&match=${mine.id}" class="inline-flex h-9 items-center gap-1.5 rounded-lg bg-red-600 px-3 text-sm font-semibold text-white hover:bg-red-700 dark:bg-rubber dark:hover:bg-red-500"><i data-lucide="trophy" class="h-4 w-4"></i>점수판으로 경기</a>
-                    ${button(reported ? '결과 다시 보내기' : '결과 보내기', `data-report="${mine.id}"`)}
-                </div>
-            </div>`;
-        }
-
         const b = t.brackets[activeGroup];
         $('admin-tools').hidden = !canAdmin;
         const locked = b && b.matches.concat(b.third ? [b.third] : []).some((m) => m.status === 'confirmed');
@@ -461,6 +444,84 @@
             return;
         }
         $('rounds').innerHTML = renderTree(b);
+    }
+
+    // ---------- 내 정보 카드 ----------
+    // 참가자 화면 맨 위에 늘 같은 자리. 접수·편성 중에는 이름·부수·그룹, 시작한 뒤에는 내 다음 경기·대기·탈락·순위.
+    // 운영진 화면은 운영 도구가 먼저라, 운영진 기기가 참가자이기도 할 때 내 경기 차례만 띄운다.
+    function myStanding(t, name) {
+        for (const [key, b] of Object.entries(t.brackets || {})) {
+            const games = b.matches.concat(b.third ? [b.third] : []).filter((m) => !m.bye && m.status !== 'bye' && m.players.includes(name));
+            if (!games.length && b.champion !== name) continue;
+            const stage = (m) => m.third ? '3·4위전' : b.labels[m.round];
+            if (b.champion === name) return { key, text: '우승', strong: true, note: b.matches.length ? '' : '그룹에 혼자라 자동으로 우승했습니다' };
+            if (b.third_winner === name) return { key, text: '3위', strong: true };
+            const match = games.find((m) => m.status === 'pending');
+            if (match) return { key, match, stage: stage(match) };
+            const next = games.find((m) => m.status === 'waiting');
+            if (next) return { key, text: `다음 경기 · ${stage(next)}`, note: '상대가 정해지면 여기에 나옵니다' };
+            const lost = games.filter((m) => m.status === 'confirmed' && m.winner !== name);
+            const last = lost.find((m) => m.third) || lost[lost.length - 1];
+            if (last) return { key, text: last.third ? '4위' : last.round === b.rounds ? '준우승' : `${stage(last)}에서 탈락` };
+            return { key, text: '대진표에서 내 경기를 확인하세요' };
+        }
+        return null;
+    }
+
+    function renderMe(t) {
+        const card = $('me-card');
+        const open = t.status === 'lobby' || t.status === 'draft';
+        const standing = me && !open ? myStanding(t, me.name) : null;
+        const show = !isViewer && (isAdmin ? !!(standing && standing.match) : !!me || open);
+        card.hidden = !show;
+        if (!show) return;
+        const box = (inner, strong) => `<div class="rounded-2xl bg-white p-4 sm:p-5 dark:bg-zinc-900 ${strong ? 'border-2 border-red-600 dark:border-red-500/60' : 'border border-zinc-200 dark:border-zinc-800'}">${inner}</div>`;
+        const label = `<p class="text-xs font-semibold text-zinc-500 dark:text-zinc-400">${open ? '내 참가 정보' : t.status === 'finished' ? '내 결과' : '내 경기'}</p>`;
+        if (!me) {
+            card.innerHTML = box(`<div class="break-keep text-center">
+                <p class="text-base font-bold">아직 참가하지 않았습니다</p>
+                <p class="mt-1 text-sm text-zinc-500 dark:text-zinc-400">이 기기로 참가하려면 명단에서 내 이름을 고르세요.</p>
+                <a href="${root.dataset.join}" class="mt-3 inline-flex h-11 items-center justify-center rounded-xl bg-red-600 px-6 text-sm font-bold text-white transition-colors hover:bg-red-700 dark:bg-rubber dark:hover:bg-red-500">참가하기</a>
+            </div>`);
+            return;
+        }
+        const p = t.participants.find((x) => x.name === me.name);
+        if (!p) {
+            card.innerHTML = box(`${label}<p class="mt-1 text-2xl font-extrabold tracking-tight">${escapeHtml(me.name)}</p>
+                <p class="mt-3 border-t border-zinc-100 pt-3 text-sm font-medium text-amber-700 dark:border-zinc-800 dark:text-amber-300">운영진이 참가 목록에서 뺐습니다. 잘못됐다면 운영진에게 알려 주세요.</p>`);
+            return;
+        }
+        const count = t.participants.filter((x) => x.group === p.group).length;
+        const head = `<div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">${label}
+                    <p class="mt-1 flex flex-wrap items-baseline gap-x-2"><span class="text-2xl font-extrabold tracking-tight [overflow-wrap:anywhere]">${escapeHtml(p.name)}</span><span class="text-sm font-medium text-zinc-400 dark:text-zinc-500">${escapeHtml(p.division || '부수 미지정')}</span></p>
+                </div>
+                <div class="flex-shrink-0 text-right">
+                    <p class="text-lg font-extrabold text-red-600 dark:text-red-400">${escapeHtml(groupName(p.group))}</p>
+                    <p class="text-xs text-zinc-400 dark:text-zinc-500">${count}명</p>
+                </div>
+            </div>`;
+        let body;
+        if (open) {
+            body = `<p class="text-sm text-zinc-600 dark:text-zinc-300">${t.status === 'draft' ? '운영진이 대진표를 짜고 있습니다. 시작하면 여기에 내 경기가 나옵니다.' : '운영진이 대진표를 만들어 시작하면 여기에 내 경기가 나옵니다.'}</p>
+                ${p.group_undecided ? '<p class="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">부수가 없어 그룹은 운영진이 확인합니다.</p>' : ''}`;
+        } else if (standing && standing.match) {
+            const m = standing.match;
+            const reported = m.report && m.report.by === me.name;
+            body = `<p class="text-xs font-semibold text-red-600 dark:text-red-400">경기 가능 · ${escapeHtml(standing.stage)} · ${m.best_of}판 ${Math.floor(m.best_of / 2) + 1}선</p>
+                <p class="mt-1 text-lg font-bold">${m.players.map((n) => `<span class="${n === me.name ? 'text-red-600 dark:text-red-400' : ''}">${escapeHtml(n)}</span> <span class="text-xs font-medium text-zinc-400">${escapeHtml(divisionOf(n))}</span>`).join(' <span class="mx-1 text-sm font-medium text-zinc-400">vs</span> ')}</p>
+                ${reported ? `<p class="mt-2 text-sm text-zinc-500 dark:text-zinc-400">결과를 보냈습니다 (승자 ${escapeHtml(m.report.winner)}). 운영진 확인을 기다리는 중입니다.</p>` : ''}
+                <div class="mt-3 flex flex-wrap gap-2">
+                    <a href="${root.dataset.scoreboard}?league=${code}&match=${m.id}" class="inline-flex h-9 items-center gap-1.5 rounded-lg bg-red-600 px-3 text-sm font-semibold text-white hover:bg-red-700 dark:bg-rubber dark:hover:bg-red-500"><i data-lucide="trophy" class="h-4 w-4"></i>점수판으로 경기</a>
+                    ${button(reported ? '결과 다시 보내기' : '결과 보내기', `data-report="${m.id}"`)}
+                </div>`;
+        } else if (standing) {
+            body = `<p class="text-lg font-extrabold ${standing.strong ? 'text-red-600 dark:text-red-400' : ''}">${escapeHtml(standing.text)}</p>
+                ${standing.note ? `<p class="mt-0.5 text-sm text-zinc-500 dark:text-zinc-400">${escapeHtml(standing.note)}</p>` : ''}`;
+        } else {
+            body = '<p class="text-sm font-medium text-amber-700 dark:text-amber-300">대진표에 아직 내 자리가 없습니다. 운영진에게 알려 주세요.</p>';
+        }
+        card.innerHTML = box(`${head}<div class="mt-3 break-keep border-t border-zinc-100 pt-3 dark:border-zinc-800">${body}</div>`, standing && standing.match);
     }
 
     // ---------- 대진표: 왼쪽 1라운드에서 오른쪽 결승으로 이어지는 나무 모양 ----------
