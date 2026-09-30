@@ -318,16 +318,26 @@ def seed_order(size):
     return order
 
 
-def round_label(size, round_no, rounds):
+def round_label(entrants, round_no, rounds):
+    # entrants: 그 라운드에 들어오는 인원(노드) 수. 10명이면 10강 → 5강 → 준결승 → 결승
     if round_no == rounds:
         return "결승"
     if round_no == rounds - 1:
         return "준결승"
-    return f"{size >> (round_no - 1)}강"
+    return f"{entrants}강"
+
+
+def level_entrants(bracket, round_no):
+    # 예전 형식(2의 제곱 대진표)으로 저장된 방도 읽을 수 있게 한다
+    entrants = bracket.get("entrants") or {}
+    return entrants.get(str(round_no), bracket["size"] >> (round_no - 1))
 
 
 def build_bracket(group_key, names, seed_mode, divisions, fmt):
     # names: 그룹 참가자 이름 (seed_mode가 'division'이면 부수 순, 아니면 무작위)
+    # 짝짓기는 아래에서 위로: 1라운드는 모두 짝을 이루고(홀수면 한 명만 부전승), 이후 라운드도 이웃끼리 짝을 짓되
+    # 홀수가 남으면 끝의 한 노드가 부전승으로 올라간다. 부전승 자리는 홀수 라운드마다 오른쪽·왼쪽을 번갈아
+    # 같은 사람이 연달아 부전승을 받지 않게 한다. (10명: 5경기 → 2경기+부전승 → 1경기+부전승 → 결승)
     names = list(names)
     if seed_mode == "division":
         names.sort(key=lambda n: (_deps["division_number"](divisions.get(n, "")) is None,
@@ -335,27 +345,66 @@ def build_bracket(group_key, names, seed_mode, divisions, fmt):
     else:
         random.shuffle(names)
 
-    if len(names) == 1:
-        return {"size": 1, "rounds": 0, "matches": [], "champion": names[0], "labels": {}, "third": None, "third_winner": None}
+    n = len(names)
+    if n == 1:
+        return {"size": 1, "rounds": 0, "matches": [], "champion": names[0], "labels": {}, "entrants": {},
+                "third": None, "third_winner": None, "third_possible": False}
 
-    size = 1
-    while size < len(names):
-        size *= 2
-    rounds = size.bit_length() - 1
-    slots = [names[seed - 1] if seed <= len(names) else None for seed in seed_order(size)]
+    if seed_mode == "division":
+        # 상위-하위 순으로 짝을 짓고(1-끝, 2-끝-1 …), 상위 짝끼리는 멀리 떨어뜨린다. 홀수면 최상위가 1라운드 부전승.
+        bye_player = names[0] if n % 2 else None
+        rest = names[1:] if n % 2 else names
+        pair_count = len(rest) // 2
+        pairs = [[rest[i], rest[len(rest) - 1 - i]] for i in range(pair_count)]
+        size = 1
+        while size < pair_count:
+            size *= 2
+        first = [pairs[seed - 1] for seed in seed_order(size) if seed <= pair_count]
+        if bye_player:
+            first.append([bye_player, None])
+    else:
+        first = [[names[i], names[i + 1] if i + 1 < n else None] for i in range(0, n, 2)]
 
-    matches = []
-    for r in range(1, rounds + 1):
-        for i in range(size >> r):
-            matches.append({
-                "id": f"{group_key}-{r}-{i}", "round": r, "index": i,
-                "players": [slots[2 * i], slots[2 * i + 1]] if r == 1 else [None, None],
-                "winner": None, "games": None, "status": "waiting", "best_of": match_best_of(fmt, size >> (r - 1)),
-                "next": f"{group_key}-{r + 1}-{i // 2}" if r < rounds else None, "slot": i % 2,
-            })
-    bracket = {"size": size, "rounds": rounds, "matches": matches, "champion": None, "third": None, "third_winner": None,
-               "labels": {str(r): round_label(size, r, rounds) for r in range(1, rounds + 1)}}
+    def node(rnd, idx, players, bye=False):
+        m = {"id": f"{group_key}-{rnd}-{idx}", "round": rnd, "index": idx, "players": players,
+             "winner": None, "games": None, "status": "waiting", "best_of": None, "next": None, "slot": 0}
+        if bye:
+            m["bye"] = True
+        return m
 
+    level = [node(1, i, players) for i, players in enumerate(first)]
+    matches = list(level)
+    entrants = {"1": n}
+    bye_right = n % 2 == 0   # 1라운드에서 이미 오른쪽 끝이 부전승이었으면 다음 홀수 라운드는 왼쪽부터
+    rnd = 1
+    while len(level) > 1:
+        rnd += 1
+        count = len(level)
+        entrants[str(rnd)] = count
+        bye_index = None
+        if count % 2 == 1:
+            bye_index = count - 1 if bye_right else 0
+            bye_right = not bye_right
+        following, idx, j = [], 0, 0
+        while j < count:
+            if j == bye_index:
+                m = node(rnd, idx, [None, None], bye=True)
+                level[j]["next"], level[j]["slot"] = m["id"], 0
+                j += 1
+            else:
+                m = node(rnd, idx, [None, None])
+                level[j]["next"], level[j]["slot"] = m["id"], 0
+                level[j + 1]["next"], level[j + 1]["slot"] = m["id"], 1
+                j += 2
+            following.append(m)
+            idx += 1
+        matches.extend(following)
+        level = following
+    rounds = rnd
+    for m in matches:
+        m["best_of"] = match_best_of(fmt, entrants[str(m["round"])])
+    bracket = {"size": n, "rounds": rounds, "matches": matches, "champion": None, "third": None, "third_winner": None,
+               "entrants": entrants, "labels": {str(r): round_label(entrants[str(r)], r, rounds) for r in range(1, rounds + 1)}}
     reflow_bracket(bracket)
     return bracket
 
@@ -377,6 +426,10 @@ def reflow_bracket(bracket):
             m["status"] = "pending"
         elif len(present) == 1:
             _advance(bracket, by_id, m, present[0], status="bye")
+    bracket["third_possible"] = bracket["rounds"] >= 2 and all(f is not None for f in third_feeders(bracket))
+    if bracket.get("third") and not bracket["third_possible"]:
+        bracket["third"] = None
+        bracket["third_winner"] = None
 
 
 def group_has_results(bracket):
@@ -440,6 +493,9 @@ def _advance(bracket, by_id, match, winner, status="confirmed"):
     elif match["next"]:
         nxt = by_id[match["next"]]
         nxt["players"][match["slot"]] = winner
+        if nxt.get("bye"):
+            _advance(bracket, by_id, nxt, winner, status="bye")   # 부전승 노드: 바로 그다음 경기로
+            return
         if all(nxt["players"]):
             nxt["status"] = "pending"
     else:
@@ -447,18 +503,37 @@ def _advance(bracket, by_id, match, winner, status="confirmed"):
     sync_third(bracket)
 
 
+def _is_bye_node(m):
+    return bool(m.get("bye")) or (m["round"] == 1 and len([p for p in m["players"] if p]) < 2)
+
+
+def third_feeders(bracket):
+    # 결승 두 자리로 이어지는 길에서 마지막 '실제 경기'(부전승 노드 제외). 그 길에 경기가 없으면 None.
+    matches = bracket["matches"]
+    final = next((m for m in matches if m["round"] == bracket["rounds"]), None)
+    if final is None:
+        return [None, None]
+    feeders = []
+    for slot in (0, 1):
+        m = next((c for c in matches if c["next"] == final["id"] and c["slot"] == slot), None)
+        while m is not None and _is_bye_node(m):
+            m = next((c for c in matches if c["next"] == m["id"]), None)
+        feeders.append(m)
+    return feeders
+
+
 def sync_third(bracket):
-    # 3·4위전이 켜져 있으면 준결승 패자를 채운다. 준결승이 부전승이면 그 자리는 비고, 한 명뿐이면 자동 3위.
+    # 3·4위전이 켜져 있으면 결승 진출자에게 마지막으로 진 두 사람을 채운다.
     third = bracket.get("third")
     if not third or third["status"] in ("confirmed", "bye") or bracket["rounds"] < 2:
         return
-    semis = [m for m in bracket["matches"] if m["round"] == bracket["rounds"] - 1]
-    for sf in semis:
-        third["players"][sf["index"]] = ([p for p in sf["players"] if p and p != sf["winner"]] or [None])[0] if sf["status"] == "confirmed" else None
+    feeders = third_feeders(bracket)
+    for slot, f in enumerate(feeders):
+        third["players"][slot] = ([p for p in f["players"] if p and p != f["winner"]] or [None])[0] if f and f["status"] == "confirmed" else None
     present = [p for p in third["players"] if p]
     if len(present) == 2:
         third["status"] = "pending"
-    elif len(present) == 1 and all(sf["status"] in ("confirmed", "bye") for sf in semis):
+    elif len(present) == 1 and all(f is None or f["status"] == "confirmed" for f in feeders):
         third["winner"], third["status"], bracket["third_winner"] = present[0], "bye", present[0]
     else:
         third["status"] = "waiting"
@@ -468,6 +543,8 @@ def set_third_place(bracket, group_key, fmt, enabled):
     if enabled:
         if bracket["rounds"] < 2:
             raise LeagueError("준결승이 없는 그룹에는 3·4위전을 둘 수 없습니다.")
+        if not bracket.get("third_possible", True):
+            raise LeagueError("결승 진출자 한쪽이 경기 없이 올라오는 대진이라 3·4위전을 둘 수 없습니다.")
         if not bracket.get("third"):
             bracket["third"] = {"id": f"{group_key}-3rd", "round": bracket["rounds"], "index": 0, "players": [None, None],
                                 "winner": None, "games": None, "status": "waiting", "best_of": match_best_of(fmt, 2),
@@ -558,19 +635,35 @@ def reset_match(state, match_id):
     if match.get("third"):
         bracket["third_winner"] = None
     elif match["next"]:
-        nxt = by_id[match["next"]]
-        if nxt["status"] in ("confirmed", "bye"):
+        # 부전승 노드를 건너 실제 다음 경기를 찾는다
+        real = by_id[match["next"]]
+        while real is not None and real.get("bye"):
+            real = by_id[real["next"]] if real["next"] else None
+        if real is not None and real["status"] == "confirmed":
             raise LeagueError("다음 경기가 이미 끝나 되돌릴 수 없습니다. 다음 경기부터 되돌리세요.")
-        if third and third["status"] in ("confirmed", "bye") and match["round"] == bracket["rounds"] - 1:
+        if third and third["status"] in ("confirmed", "bye") and any(f is not None and f["id"] == match["id"] for f in third_feeders(bracket)):
             raise LeagueError("3·4위전이 이미 끝나 되돌릴 수 없습니다. 3·4위전부터 되돌리세요.")
-        nxt["players"][match["slot"]] = None
-        nxt["status"] = "waiting"
+        _retract(bracket, by_id, match)
     else:
         bracket["champion"] = None
     match.update({"winner": None, "games": None, "status": "pending"})
     sync_third(bracket)
     refresh_status(state)
     return match
+
+
+def _retract(bracket, by_id, match):
+    # match의 승자가 올라간 자리를 비운다. 부전승 노드를 거쳤으면 그 노드들도 함께 비운다.
+    nxt = by_id[match["next"]]
+    nxt["players"][match["slot"]] = None
+    if nxt.get("bye"):
+        if nxt["next"]:
+            _retract(bracket, by_id, nxt)
+        else:
+            bracket["champion"] = None
+        nxt.update({"winner": None, "status": "waiting"})
+    else:
+        nxt["status"] = "waiting"
 
 
 def start_tournament(state):
@@ -752,7 +845,7 @@ def api_settings(code):
     for bracket in state["brackets"].values():
         for m in bracket["matches"] + ([bracket["third"]] if bracket.get("third") else []):
             if m["status"] not in ("confirmed", "bye"):
-                m["best_of"] = match_best_of(state["format"], 2 if m.get("third") else bracket["size"] >> (m["round"] - 1))
+                m["best_of"] = match_best_of(state["format"], 2 if m.get("third") else level_entrants(bracket, m["round"]))
     save_state(state)
     return _ok(state)
 

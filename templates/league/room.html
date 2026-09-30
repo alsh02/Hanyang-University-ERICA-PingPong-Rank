@@ -353,7 +353,7 @@
                 <span class="font-semibold text-zinc-500 dark:text-zinc-400">${escapeHtml(groupName(activeGroup))} 운영</span>
                 ${b && b.rounds >= 1 ? (locked ? '<span class="text-zinc-400">결과가 확정되어 대진은 고정</span>'
                     : `${button(editMode ? '대진 수정 끝' : '대진 수정', 'data-edit', editMode ? 'primary' : 'ghost')}${button('무작위 재배치', 'data-rebuild="random"')}`) : ''}
-                ${b && b.rounds >= 2 ? button(b.third ? '3·4위전 취소' : '3·4위전 진행', `data-third="${b.third ? 'off' : 'on'}"`, b.third ? 'ghost' : 'primary') : '<span class="text-zinc-400">3·4위전 없음(준결승 없음)</span>'}
+                ${b && b.rounds >= 2 && b.third_possible !== false ? button(b.third ? '3·4위전 취소' : '3·4위전 진행', `data-third="${b.third ? 'off' : 'on'}"`, b.third ? 'ghost' : 'primary') : `<span class="text-zinc-400">3·4위전 없음(${b && b.rounds >= 2 ? '결승 진출자 한쪽이 경기 없이 올라옴' : '준결승 없음'})</span>`}
                 <label class="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-300">5판 3선 전환
                     <select id="best-of-from" class="select-chevron select-chevron-sm h-8 rounded-lg border border-zinc-200 bg-white pl-2.5 pr-8 text-xs font-semibold text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
                         ${[[0, '전환 없음'], [2, '결승부터'], [4, '준결승부터'], [8, '8강부터'], [16, '16강부터']].map(([v, l]) => `<option value="${v}" ${v === from ? 'selected' : ''}>${l}</option>`).join('')}
@@ -379,7 +379,8 @@
         for (let r = 1; r <= b.rounds; r++) rounds.push(b.matches.filter((m) => m.round === r).sort((x, y) => x.index - y.index));
         const leaves = {}, shown = {}, center = {};
         rounds[0].forEach((m) => { const n = m.players.filter(Boolean).length; shown[m.id] = edit || n === 2; leaves[m.id] = edit ? 2 : Math.max(n, 1); });
-        for (let r = 1; r < b.rounds; r++) rounds[r].forEach((m) => { shown[m.id] = true; leaves[m.id] = rounds[r - 1].filter((c) => c.next === m.id).reduce((sum, c) => sum + leaves[c.id], 0); });
+        // 상위 라운드의 부전승 노드(bye)는 카드를 그리지 않고, 그 선수를 다음 카드에 바로 보여 준다
+        for (let r = 1; r < b.rounds; r++) rounds[r].forEach((m) => { shown[m.id] = !m.bye; leaves[m.id] = rounds[r - 1].filter((c) => c.next === m.id).reduce((sum, c) => sum + leaves[c.id], 0); });
         let y = 0;
         rounds[0].forEach((m) => { center[m.id] = y + leaves[m.id] * BK.pitch / 2; y += leaves[m.id] * BK.pitch; });
         const total = y;
@@ -393,22 +394,23 @@
         const thirdTop = total + 16;
         const height = total + (b.third ? 16 + 20 + BK.cardH + 24 : 8);
 
-        const players = rounds[0].reduce((sum, m) => sum + m.players.filter(Boolean).length, 0);
-        const byes = rounds[0].filter((m) => m.players.filter(Boolean).length === 1).length;
-        const headers = rounds.map((_, i) => {
+        const headers = rounds.map((list, i) => {
             const r = i + 1;
-            const first = r === 1 && byes > 0;
-            const label = first && !edit ? `${players}강` : b.labels[r];
-            const sub = first ? (edit ? '빈 자리는 부전승' : `부전승 ${byes}명`) : '';
+            const byes = r === 1 ? list.filter((m) => m.players.filter(Boolean).length === 1).length : list.filter((m) => m.bye).length;
+            const sub = r === 1 && edit ? '빈 자리는 부전승' : byes ? `부전승 ${byes}명` : '';
             return `<div class="flex-shrink-0 text-center" style="width:${BK.cardW}px;margin-right:${r < b.rounds ? BK.gap : 0}px">
-                <p class="text-xs font-bold text-zinc-500 dark:text-zinc-400">${escapeHtml(label)}</p>
+                <p class="text-xs font-bold text-zinc-500 dark:text-zinc-400">${escapeHtml(b.labels[r])}</p>
                 ${sub ? `<p class="text-[11px] text-zinc-400 dark:text-zinc-500">${escapeHtml(sub)}</p>` : '<p class="text-[11px]">&nbsp;</p>'}
             </div>`;
         }).join('');
 
+        // 연결선: 부전승 노드는 건너뛰고 다음에 보이는 카드까지 잇는다
         const paths = b.matches.filter((m) => shown[m.id] && m.next).map((m) => {
-            const x1 = colX(m.round) + BK.cardW, xm = x1 + BK.gap / 2, x2 = colX(m.round + 1);
-            return `<path d="M${x1} ${center[m.id]}H${xm}V${center[m.next]}H${x2}"/>`;
+            let to = byId[m.next];
+            while (to && !shown[to.id] && to.next) to = byId[to.next];
+            if (!to || !shown[to.id]) return '';
+            const x1 = colX(m.round) + BK.cardW, x2 = colX(to.round), xm = x2 - BK.gap / 2;
+            return `<path d="M${x1} ${center[m.id]}H${xm}V${center[to.id]}H${x2}"/>`;
         }).join('');
         const cards = b.matches.filter((m) => shown[m.id]).map((m) => `<div class="absolute -translate-y-1/2" style="left:${colX(m.round)}px;top:${center[m.id]}px;width:${BK.cardW}px">${edit && m.round === 1 ? renderEditableMatch(m) : renderMatch(m, byId, b)}</div>`).join('');
         const third = b.third ? `<div class="absolute" style="left:${colX(b.rounds)}px;top:${thirdTop}px;width:${BK.cardW}px">
