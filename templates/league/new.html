@@ -116,7 +116,7 @@
             try {
                 localStorage.setItem(`league_admin_${data.code}`, data.admin_key);
                 localStorage.setItem(`league_admin_code_${data.code}`, data.admin_code);
-                localStorage.setItem('league_last', JSON.stringify({ code: data.code, url: data.admin_url }));
+                localStorage.setItem('league_last', JSON.stringify({ code: data.code, url: data.admin_url, name: data.name }));
             } catch (e) {}
             location.href = data.admin_url;
         } catch (e) {

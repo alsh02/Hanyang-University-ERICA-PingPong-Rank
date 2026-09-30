@@ -8,7 +8,7 @@
     .select-chevron-sm { background-position: right 0.5rem center; background-size: 0.875rem; }
 </style>
 <script id="roster-data" type="application/json">{{ roster | tojson }}</script>
-<div id="room" data-code="{{ code }}" data-admin="{{ 'true' if is_admin else 'false' }}" data-viewer="{{ 'true' if viewer else 'false' }}"
+<div id="room" data-code="{{ code }}" data-name="{{ room_name or '' }}" data-admin="{{ 'true' if is_admin else 'false' }}" data-viewer="{{ 'true' if viewer else 'false' }}"
      data-api-base="{{ url_for('league.api_view_state', view=view) if viewer else url_for('league.api_state', code=code) }}"
      data-scoreboard="{{ url_for('scoreboard') }}" data-join="{{ url_for('league.league_join', code=code) if code else url_for('league.league_join') }}">
 
@@ -153,7 +153,9 @@
             if (tournament) render();
         }).catch(() => {});
     }
-    if (!isViewer) storage.set('league_last', JSON.stringify({ code, url: location.pathname }));
+    // 첫 화면의 '돌아가기'에 쓴다. 대회 이름은 서버가 그려 준 탭 제목과 같은 값이고, 그때 못 읽었으면 상태를 받은 뒤 채운다.
+    const remember = (name) => { if (!isViewer) storage.set('league_last', JSON.stringify({ code, url: location.pathname, name })); };
+    remember(root.dataset.name);
 
     let tournament = null, activeGroup = null, pendingAction = null;
 
@@ -184,6 +186,7 @@
         if (json === shownJson) return false;
         tournament = next;
         shownJson = json;
+        if (!root.dataset.name && next.name) { root.dataset.name = next.name; remember(next.name); }
         return true;
     }
     let refreshFailures = 0;

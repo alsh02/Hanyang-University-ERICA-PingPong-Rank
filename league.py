@@ -1133,7 +1133,7 @@ def api_create():
         "groups": groups, "seed": seed, "group_overrides": {}, "removed": [], "brackets": {}, "applied": [],
     }
     save_state(state)
-    return jsonify({"code": code, "admin_key": state["admin_key"], "admin_code": admin_code,
+    return jsonify({"code": code, "name": state["name"], "admin_key": state["admin_key"], "admin_code": admin_code,
                     "admin_url": url_for("league.league_admin", code=code, key=state["admin_key"]),
                     "join_url": url_for("league.league_room", code=code)})
 
@@ -1161,7 +1161,7 @@ def _admin_codes(rows):
 
 
 def _login_response(state):
-    return jsonify({"code": state["code"], "admin_key": state["admin_key"], "admin_code": state["admin_code"],
+    return jsonify({"code": state["code"], "name": state["name"], "admin_key": state["admin_key"], "admin_code": state["admin_code"],
                     "admin_url": url_for("league.league_admin", code=state["code"])})
 
 

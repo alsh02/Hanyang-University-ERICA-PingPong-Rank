@@ -238,7 +238,7 @@
             const url = `/league/${code}`;
             try {
                 localStorage.setItem(`league_token_${code}`, JSON.stringify({ name: data.name, token: data.token }));
-                localStorage.setItem('league_last', JSON.stringify({ code, url }));
+                localStorage.setItem('league_last', JSON.stringify({ code, url, name: data.tournament.name }));
             } catch (e) {}
             location.href = url;   // 상자는 방 화면이 뜰 때까지 둔다
         } catch (e) {
@@ -279,7 +279,7 @@
             try {
                 localStorage.setItem(`league_admin_${data.code}`, data.admin_key);
                 localStorage.setItem(`league_admin_code_${data.code}`, data.admin_code);
-                localStorage.setItem('league_last', JSON.stringify({ code: data.code, url: data.admin_url }));
+                localStorage.setItem('league_last', JSON.stringify({ code: data.code, url: data.admin_url, name: data.name }));
             } catch (e) {}
             location.href = data.admin_url;   // 상자는 운영 화면이 뜰 때까지 둔다
         } catch (e) { hideBusy(); adminError.textContent = e.message; adminError.hidden = false; adminDigits(); }

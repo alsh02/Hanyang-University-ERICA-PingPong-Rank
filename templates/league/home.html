@@ -42,14 +42,19 @@
 </div>
 
 
-<!-- 이 기기에서 마지막으로 연 토너먼트 -->
+<!-- 이 기기에서 마지막으로 연 토너먼트: '김도윤으로 가을 리그전 돌아가기' (운영 화면이면 '운영진으로'). 코드는 보이지 않는다. -->
 <div id="league-resume" hidden class="mx-auto mt-6 max-w-2xl">
     <a id="league-resume-link" href="#" class="flex items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm transition-colors hover:border-red-300 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-red-500/40">
-        <span class="flex items-center gap-2 text-zinc-600 dark:text-zinc-300">
-            <i data-lucide="history" class="h-4 w-4 text-zinc-400"></i>
-            <span>마지막으로 연 토너먼트 <strong id="league-resume-code" class="font-mono text-zinc-900 dark:text-zinc-100"></strong>로 돌아가기</span>
+        <span class="flex min-w-0 items-center gap-2 text-zinc-600 dark:text-zinc-300">
+            <i data-lucide="history" class="h-4 w-4 flex-shrink-0 text-zinc-400"></i>
+            <!-- 긴 대회 이름만 말줄임하고 '돌아가기'는 늘 보이게 -->
+            <span class="flex min-w-0 items-baseline gap-1">
+                <span id="league-resume-who" hidden class="flex-shrink-0 whitespace-nowrap"><strong id="league-resume-player" class="font-semibold text-zinc-900 dark:text-zinc-100"></strong><span id="league-resume-particle"></span></span>
+                <strong id="league-resume-name" class="min-w-0 truncate font-semibold text-zinc-900 dark:text-zinc-100"></strong>
+                <span class="flex-shrink-0 whitespace-nowrap">돌아가기</span>
+            </span>
         </span>
-        <i data-lucide="chevron-right" class="h-4 w-4 text-zinc-400"></i>
+        <i data-lucide="chevron-right" class="h-4 w-4 flex-shrink-0 text-zinc-400"></i>
     </a>
 </div>
 {% endblock %}
@@ -57,12 +62,31 @@
 {% block scripts %}
 <script>
 (() => {
+    const $ = (id) => document.getElementById(id);
+    // 끝 글자 받침으로 으로/로 ('김도윤으로' · '정지호로', ㄹ 받침도 '로')
+    const lastJong = (word) => { const c = String(word).charCodeAt(String(word).length - 1); return c >= 0xAC00 && c <= 0xD7A3 ? (c - 0xAC00) % 28 : 0; };
+    const euro = (word) => ([0, 8].includes(lastJong(word)) ? '로' : '으로');
     try {
         const last = JSON.parse(localStorage.getItem('league_last') || 'null');
-        if (!last || !last.code) return;
-        document.getElementById('league-resume-code').textContent = last.code;
-        document.getElementById('league-resume-link').href = last.url;
-        document.getElementById('league-resume').hidden = false;
+        if (!last || !last.code || !last.url) return;
+        // 누구로 돌아가는지: 운영 화면이면 운영진, 참가자 화면이면 이 기기에 저장된 참가 이름 (참가하지 않고 연 방이면 대회 이름만)
+        const token = JSON.parse(localStorage.getItem(`league_token_${last.code}`) || 'null');
+        const who = /\/admin(\?|$)/.test(last.url) ? '운영진' : (token && token.name) || '';
+        const show = (name) => {
+            if (who) { $('league-resume-player').textContent = who; $('league-resume-particle').textContent = euro(who); $('league-resume-who').hidden = false; }
+            $('league-resume-name').textContent = name;
+            $('league-resume-link').href = last.url;
+            $('league-resume').hidden = false;
+        };
+        if (last.name) show(last.name);
+        else {
+            // 대회 이름을 저장하기 전에 연 방: 한 번 읽어 채운다. 지워진 방이면 띄우지 않는다.
+            fetch(`/api/league/${last.code}`).then((r) => (r.ok ? r.json() : null)).then((d) => {
+                if (!d || !d.tournament) return;
+                show(d.tournament.name);
+                try { localStorage.setItem('league_last', JSON.stringify({ ...last, name: d.tournament.name })); } catch (e) {}
+            }).catch(() => {});
+        }
     } catch (e) {}
 })();
 </script>
