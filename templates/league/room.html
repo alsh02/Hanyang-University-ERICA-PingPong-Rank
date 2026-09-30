@@ -46,7 +46,7 @@
     </div>
 
     <!-- 참가 접수 -->
-    <section id="lobby" hidden class="mx-auto max-w-3xl">
+    <section id="lobby" hidden class="mx-auto max-w-4xl">
         <div id="lobby-groups" class="grid gap-3 sm:grid-cols-3"></div>
         <div id="lobby-actions" class="mt-5 flex flex-col items-center gap-2"></div>
     </section>
@@ -259,21 +259,27 @@
     function renderLobby(t) {
         const groups = t.groups.map((g) => {
             const members = t.participants.filter((p) => p.group === g.key);
-            const rows = members.map((p) => `
+            const rows = members.map((p) => {
+                // 이름은 절대 줄이지 않는다. 상태 안내는 이름 아래 둘째 줄에 두어 좁은 칸(PC 3열)에서도 이름이 잘리지 않게 한다.
+                const notes = [
+                    p.group_undecided ? '<span class="whitespace-nowrap text-amber-700 dark:text-amber-300">배정 확인</span>' : '',
+                    p.added_by_admin && canAdmin ? '<span class="whitespace-nowrap" title="본인 폰에서 참가하지 않아 결과 보고는 운영진이 합니다">운영진 등록</span>' : '',
+                ].filter(Boolean);
+                return `
                 <li class="flex items-center justify-between gap-2 py-1.5 text-sm">
-                    <span class="flex min-w-0 items-center gap-1.5">
-                        <span class="truncate font-semibold ${me && p.name === me.name ? 'text-red-600 dark:text-red-400' : ''}">${escapeHtml(p.name)}</span>
-                        <span class="flex-shrink-0 text-xs text-zinc-400 dark:text-zinc-500">${escapeHtml(p.division || '미지정')}</span>
-                        ${p.group_undecided ? '<span class="flex-shrink-0 rounded border border-amber-300 px-1 text-[10px] font-semibold text-amber-700 dark:border-amber-500/40 dark:text-amber-300">배정 확인</span>' : ''}
-                        ${p.added_by_admin && canAdmin ? '<span class="flex-shrink-0 text-[10px] font-medium text-zinc-400 dark:text-zinc-500" title="본인 폰에서 참가하지 않아 결과 보고는 운영진이 합니다">운영진 등록</span>' : ''}
-                    </span>
+                    <div class="min-w-0">
+                        <span class="font-semibold [overflow-wrap:anywhere] ${me && p.name === me.name ? 'text-red-600 dark:text-red-400' : ''}">${escapeHtml(p.name)}</span>
+                        <span class="ml-1 text-xs text-zinc-400 dark:text-zinc-500">${escapeHtml(p.division || '미지정')}</span>
+                        ${notes.length ? `<p class="flex flex-wrap gap-x-1.5 text-[11px] font-medium leading-4 text-zinc-400 dark:text-zinc-500">${notes.join('')}</p>` : ''}
+                    </div>
                     ${canAdmin ? `<span class="flex flex-shrink-0 items-center gap-1">
                         <select data-move="${escapeHtml(p.name)}" aria-label="${escapeHtml(p.name)} 그룹" class="select-chevron select-chevron-sm h-7 rounded-md border border-zinc-200 bg-white pl-2.5 pr-7 text-xs text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
                             ${t.groups.map((o) => `<option value="${o.key}" ${o.key === p.group ? 'selected' : ''}>${escapeHtml(o.name)}</option>`).join('')}
                         </select>
                         ${button('<i data-lucide="x" class="h-3.5 w-3.5"></i>', `data-remove="${escapeHtml(p.name)}" aria-label="${escapeHtml(p.name)} 제외"`, 'quiet')}
                     </span>` : ''}
-                </li>`).join('');
+                </li>`;
+            }).join('');
             const range = g.min <= -99 ? `~${g.max}부` : g.max >= 99 ? `${g.min}부~` : `${g.min}~${g.max}부`;
             return `<div class="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
                 <div class="mb-2 flex items-baseline justify-between">
