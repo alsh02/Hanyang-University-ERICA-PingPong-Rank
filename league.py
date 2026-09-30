@@ -1063,7 +1063,8 @@ def api_rooms():
 
 @league_bp.route("/league/admin")
 def league_admin_login():
-    return render_template("league/admin.html")
+    # 예전 '운영 화면 열기' 주소: 관리자 코드 상자는 열려 있는 토너먼트 화면으로 옮겼다 (방 카드의 운영, 목록에 없는 방은 관리자 코드로 열기)
+    return redirect(url_for("league.league_join", admin=1))
 
 
 def _room_name(code):
@@ -1166,15 +1167,24 @@ def _login_response(state):
 
 @league_bp.route("/api/league/admin-login", methods=["POST"])
 def api_admin_login_by_code():
-    # 관리자 코드만으로 그 방을 찾아 이 기기에 운영 키를 내준다 (관리자 코드는 방마다 다르다)
+    # 관리자 코드만으로 그 방을 찾아 이 기기에 운영 키를 내준다 (관리자 코드는 방마다 다르다).
+    # 방 카드의 '운영'으로 왔으면 그 카드의 보기 키(view)도 온다 — 다른 방의 관리자 코드면 그 방을 열지 않고 알려 준다.
     _check_admin_login_limit()
-    admin_code = normalize_code((request.get_json(silent=True) or {}).get("admin_code", ""))
+    data = request.get_json(silent=True) or {}
+    admin_code = normalize_code(data.get("admin_code", ""))
     if len(admin_code) != 6:
         raise LeagueError("관리자 코드 6자리를 넣어 주세요.")
     rows, _ = _read_all()
     found = [raw for raw, c in _admin_codes(rows) if secrets.compare_digest(c, admin_code)]
     if not found:
         raise LeagueError("그 관리자 코드의 토너먼트가 없습니다.", 403)
+    view = str(data.get("view", "")).strip()
+    if view:
+        chosen = [raw for raw in found if raw.get("admin_key") and view_key(raw) == view]
+        if not chosen:
+            other = max(found, key=lambda raw: raw.get("created_at", ""))
+            raise LeagueError(f"입력한 관리자 코드는 '{other.get('name', '')}' 토너먼트의 코드입니다. 고른 토너먼트의 관리자 코드를 다시 확인해 주세요.")
+        found = chosen
     # 예전에 만든 방끼리 코드가 겹쳤다면 가장 최근 방
     latest = max(found, key=lambda raw: raw.get("created_at", ""))
     return _login_response(load_state(latest["code"]))
