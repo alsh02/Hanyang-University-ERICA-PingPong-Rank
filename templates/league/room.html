@@ -422,7 +422,7 @@
         const done = drafting ? [] : bracketKeys.filter((k) => t.brackets[k].champion);
         $('champions').hidden = !done.length;
         $('champions').innerHTML = done.length ? `<div class="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-            <p class="mb-2 text-xs font-semibold text-zinc-500 dark:text-zinc-400">${t.status === 'finished' ? '리그전 종료 · 그룹별 우승' : '우승 확정'}</p>
+            <p class="mb-2 text-xs font-semibold text-zinc-500 dark:text-zinc-400">${t.status === 'finished' ? '토너먼트 종료 · 그룹별 우승' : '우승 확정'}</p>
             <div class="flex flex-wrap gap-x-6 gap-y-1">${done.map((k) => `<span class="flex items-baseline gap-2 text-sm"><span class="text-zinc-500 dark:text-zinc-400">${escapeHtml(groupName(k))}</span><strong class="text-lg font-extrabold text-red-600 dark:text-red-400">${escapeHtml(t.brackets[k].champion)}</strong></span>`).join('')}</div>
         </div>` : '';
 

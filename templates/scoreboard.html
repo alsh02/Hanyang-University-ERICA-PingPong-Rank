@@ -526,7 +526,7 @@
         });
         setup.querySelectorAll('[data-player], [data-clear], #swap-players').forEach((el) => { el.disabled = true; });
         const group = (t.groups.find((g) => g.key === groupKey) || {}).name || groupKey;
-        $('league-banner-text').textContent = `리그전 ${t.name} · ${group} ${bracket.labels[match.round]} · 끝나면 결과가 대진표로 보내집니다`;
+        $('league-banner-text').textContent = `토너먼트 ${t.name} · ${group} ${bracket.labels[match.round]} · 끝나면 결과가 대진표로 보내집니다`;
         $('league-banner-link').href = LEAGUE.backUrl;
         $('league-banner').hidden = false;
         // 왼쪽 위 버튼은 메인이 아니라 대진표로
@@ -536,7 +536,7 @@
         syncSetup();
     }
     if (LEAGUE) {
-        const hideBusy = Busy.show('리그전 경기를 불러오는 중입니다', { delay: 200 });
+        const hideBusy = Busy.show('토너먼트 경기를 불러오는 중입니다', { delay: 200 });
         loadLeagueMatch().catch((e) => showToast(e.message)).finally(hideBusy);
     }
 
@@ -604,7 +604,7 @@
                 const data = await response.json();
                 if (!response.ok) throw new Error(data.error || '저장에 실패했습니다.');
                 if (LEAGUE) {
-                    $('result-message').innerHTML = `${data.confirmed ? '리그전 대진표에 반영했습니다.' : '결과를 보냈습니다. 운영진이 확인하면 대진표에 반영됩니다.'} <a href="${LEAGUE.backUrl}" class="underline">대진표로 돌아가기</a>`;
+                    $('result-message').innerHTML = `${data.confirmed ? '토너먼트 대진표에 반영했습니다.' : '결과를 보냈습니다. 운영진이 확인하면 대진표에 반영됩니다.'} <a href="${LEAGUE.backUrl}" class="underline">대진표로 돌아가기</a>`;
                 } else {
                     headToHead = data.head_to_head;
                     renderHeadToHead();

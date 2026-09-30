@@ -95,11 +95,11 @@
 
             <div class="flex items-center gap-1">
                 <!-- Navigation Tabs (메인 화면은 본문 카드가 같은 역할을 하므로 생략) -->
-                {% set nav_items = [('search', 'search', '부원 검색'), ('stats', 'bar-chart-3', '대시보드'), ('scoreboard', 'trophy', '점수판'), ('league.league_home', 'swords', '리그전')] %}
+                {% set nav_items = [('search', 'search', '부원 검색'), ('stats', 'bar-chart-3', '대시보드'), ('scoreboard', 'trophy', '점수판'), ('league.league_home', 'swords', '토너먼트')] %}
                 {% if request.endpoint != 'index' %}
                 <nav class="flex items-center gap-0.5 sm:gap-1">
                     {% for endpoint, icon, label in nav_items %}
-                    {# 리그전은 하위 화면(개설·참가·방)에서도 탭이 켜져 있어야 한다 #}
+                    {# 토너먼트는 하위 화면(개설·참가·방)에서도 탭이 켜져 있어야 한다 #}
                     {% set is_active = request.endpoint == endpoint or (endpoint == 'league.league_home' and (request.endpoint or '').startswith('league.')) %}
                     <a href="{{ url_for(endpoint) }}" {% if is_active %}aria-current="page"{% endif %}
                        class="flex h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-1.5 text-sm font-semibold transition-colors sm:px-3 {{ 'bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-300' if is_active else 'text-zinc-500 hover:bg-zinc-200/70 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100' }}">

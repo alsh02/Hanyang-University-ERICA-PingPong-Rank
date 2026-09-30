@@ -148,7 +148,7 @@
         if (!chosen) return;
         button.disabled = true;
         error.hidden = true;
-        const hideBusy = Busy.show('리그전 참가 중입니다');
+        const hideBusy = Busy.show('토너먼트 참가 중입니다');
         const code = codeInput.value;
         try {
             const response = await fetch(`/api/league/${code}/join`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: chosen.이름, room: room || '' }) });

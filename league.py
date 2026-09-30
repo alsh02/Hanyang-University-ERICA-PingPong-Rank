@@ -1430,7 +1430,7 @@ def _confirm_and_record(state, match, winner, games):
         wins = [sum(1 for x, y in parsed if x > y), sum(1 for x, y in parsed if y > x)]
         target, best_of = state["format"]["target"], match["best_of"]
         row = [kst_now()[:16], a, b, str(wins[0]), str(wins[1]), winner,
-               f"{target}점 {best_of}판 {best_of // 2 + 1}선 · 리그전 {state['name']}",
+               f"{target}점 {best_of}판 {best_of // 2 + 1}선 · 토너먼트 {state['name']}",
                ", ".join(f"{x}:{y}" for x, y in parsed)]
         try:
             _deps["record_match"](row)
