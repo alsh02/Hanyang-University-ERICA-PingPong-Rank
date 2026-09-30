@@ -8,14 +8,19 @@
     .select-chevron-sm { background-position: right 0.5rem center; background-size: 0.875rem; }
 </style>
 <script id="roster-data" type="application/json">{{ roster | tojson }}</script>
-<div id="room" data-code="{{ code }}" data-admin="{{ 'true' if is_admin else 'false' }}"
-     data-scoreboard="{{ url_for('scoreboard') }}" data-join="{{ url_for('league.league_join', code=code) }}">
+<div id="room" data-code="{{ code }}" data-admin="{{ 'true' if is_admin else 'false' }}" data-viewer="{{ 'true' if viewer else 'false' }}"
+     data-api-base="{{ url_for('league.api_view_state', view=view) if viewer else url_for('league.api_state', code=code) }}"
+     data-scoreboard="{{ url_for('scoreboard') }}" data-join="{{ url_for('league.league_join', code=code) if code else url_for('league.league_join') }}">
 
     <!-- 머리: 대회 이름 · 상태 · 참가 코드 -->
     <div class="mb-6 flex flex-col items-center text-center">
         <span id="status-pill" class="mb-3 rounded-full border px-3 py-1 text-xs font-semibold">불러오는 중</span>
         <h1 id="room-name" class="text-2xl font-extrabold tracking-tight sm:text-3xl">토너먼트</h1>
+        {% if viewer %}
+        <p class="mt-2 text-sm text-zinc-500 dark:text-zinc-400">보기 전용 대진표 · 참가는 <a href="{{ url_for('league.league_join') }}" class="underline underline-offset-2 hover:text-red-600 dark:hover:text-red-400">참가 페이지</a>에서</p>
+        {% else %}
         <p class="mt-2 text-sm text-zinc-500 dark:text-zinc-400">참가 코드 <strong id="room-code" class="ml-1 font-mono text-lg tracking-[0.25em] text-zinc-900 dark:text-zinc-100">{{ code }}</strong></p>
+        {% endif %}
         <p id="room-format" class="mt-1 text-xs text-zinc-400 dark:text-zinc-500"></p>
         <p id="admin-code-line" hidden class="mt-1 text-xs text-zinc-400 dark:text-zinc-500">관리자 코드 <strong id="admin-code" class="ml-1 font-mono text-sm tracking-[0.2em] text-zinc-700 dark:text-zinc-300"></strong> · 다른 운영진 기기에서 이 코드로 운영 화면을 열 수 있습니다</p>
         <div id="admin-share" hidden class="mt-3 flex flex-wrap justify-center gap-2">
@@ -101,7 +106,8 @@
 (() => {
     const root = document.getElementById('room');
     const ROSTER = JSON.parse(document.getElementById('roster-data').textContent || '[]');
-    const code = root.dataset.code, isAdmin = root.dataset.admin === 'true';
+    const code = root.dataset.code, isAdmin = root.dataset.admin === 'true', isViewer = root.dataset.viewer === 'true';
+    const apiBase = root.dataset.apiBase;   // 참가자·운영진은 /api/league/<코드>, 보기 전용은 /api/league/v/<키>
     const $ = (id) => document.getElementById(id);
     const escapeHtml = (text) => String(text).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
     const storage = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
@@ -113,7 +119,7 @@
     const adminCode = storage.get(`league_admin_code_${code}`);
     const me = (() => { try { return JSON.parse(storage.get(`league_token_${code}`) || 'null'); } catch (e) { return null; } })();
     let canAdmin = isAdmin && !!adminKey;
-    storage.set('league_last', JSON.stringify({ code, url: location.pathname }));
+    if (!isViewer) storage.set('league_last', JSON.stringify({ code, url: location.pathname }));
 
     let tournament = null, activeGroup = null, pendingAction = null;
 
@@ -127,7 +133,7 @@
     async function api(path, body) {
         const headers = { 'Content-Type': 'application/json' };
         if (canAdmin) headers['X-League-Key'] = adminKey;
-        const response = await fetch(`/api/league/${code}${path}`, body === undefined ? { headers } : { method: 'POST', headers, body: JSON.stringify(body) });
+        const response = await fetch(`${apiBase}${path}`, body === undefined ? { headers } : { method: 'POST', headers, body: JSON.stringify(body) });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.error || (response.status >= 500 ? '서버 응답이 늦습니다. 잠시 후 다시 시도해 주세요.' : '요청에 실패했습니다.'));
         return data;
@@ -239,7 +245,7 @@
         baseTitle = `${t.name} · POWERDRIVE HANYANG`;
         document.title = baseTitle;
         $('room-name').textContent = t.name;
-        $('room-code').textContent = t.code;
+        if (t.code && $('room-code')) $('room-code').textContent = t.code;
         const fromLabel = { 2: '결승', 4: '준결승', 8: '8강', 16: '16강', 32: '32강' }[t.format.best_of_from];
         $('room-format').textContent = `${t.format.target}점 · 3판 2선${fromLabel ? ` · ${fromLabel}부터 5판 3선` : ''} · ${t.seed === 'division' ? '부수 순 배치' : '무작위 배치'}`;
         const pill = $('status-pill');
@@ -253,9 +259,9 @@
         $('admin-code-line').hidden = !(canAdmin && adminCode);
         if (canAdmin && adminCode) $('admin-code').textContent = adminCode;
         $('admin-login').hidden = !(isAdmin && !adminKey);
-        $('admin-hint').hidden = isAdmin || t.status === 'lobby';
+        $('admin-hint').hidden = isAdmin || isViewer || t.status === 'lobby';
         if (isAdmin && !adminKey) showNotice('이 기기에는 운영 권한이 없습니다. 관리자 코드를 넣어 주세요. 코드는 개설한 운영진 화면 상단에 있고, 잃어버렸으면 \'탁우회 토너먼트\' 구글 시트의 \'토너먼트\' 탭에서 볼 수 있습니다.');
-        else if (!isAdmin && !me && t.status === 'lobby') showNotice('아직 참가하지 않았습니다. 참가 페이지에서 코드를 넣고 이름을 고르세요.');
+        else if (!isAdmin && !isViewer && !me && t.status === 'lobby') showNotice('아직 참가하지 않았습니다. 참가 페이지에서 코드를 넣고 이름을 고르세요.');
         else showNotice('');
 
         $('lobby').hidden = t.status !== 'lobby';

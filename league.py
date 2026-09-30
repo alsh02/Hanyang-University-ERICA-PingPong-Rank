@@ -10,6 +10,7 @@
 - '토너먼트로그': 참가·결과 보고를 한 줄씩 덧붙이기만 한다(append-only). 여러 명이 동시에 눌러도 서로 덮어쓰지 않는다.
 운영진의 상태 변경은 항상 최신 행을 다시 읽은 뒤 한 번에 쓰므로, 쓰는 사람이 운영진 하나뿐이라 충돌이 없다.
 """
+import hashlib
 import json
 import random
 import re
@@ -293,10 +294,39 @@ def list_rooms():
             "name": state["name"], "status": state["status"], "status_label": STATUS_LABELS.get(state["status"], state["status"]),
             "participants": count, "created_at": state["created_at"][:16],
             "groups": [g["name"] for g in state.get("groups", [])],
-            "code": state["code"] if state["status"] != "lobby" else None,
+            # 코드는 어떤 상태에서도 내보내지 않는다. 진행 중·종료 방은 보기 전용 키로 대진표를 연다.
+            "view": view_key(state) if state["status"] != "lobby" and state.get("admin_key") else None,
         })
     rooms.sort(key=lambda r: r["created_at"], reverse=True)
     return rooms[:ROOM_LIST_LIMIT]
+
+
+def view_key(state):
+    # 대진표 '보기 전용' 주소용 키. 운영 키에서 한 방향으로 만들어 저장이 필요 없고, 이 키로는 참가 코드를 알 수 없다.
+    return hashlib.sha256(f"view:{state['admin_key']}".encode()).hexdigest()[:12]
+
+
+def load_state_by_view(view, force=False):
+    # 보기 전용 키로 방을 찾는다 (방 수만큼 훑는다; 방은 많아야 수십 개)
+    view = str(view or "").strip().lower()
+    rows, _ = _read_all(force)
+    for row in rows[1:]:
+        if len(row) < 5 or not row[4]:
+            continue
+        try:
+            raw = json.loads(row[4])
+        except ValueError:
+            continue
+        if raw.get("admin_key") and view_key(raw) == view:
+            return load_state(raw["code"], force)
+    raise LeagueError("그 대진표를 찾을 수 없습니다.", 404)
+
+
+def viewer_view(state):
+    # 보기 전용 화면에는 참가 코드도 보내지 않는다 (코드는 입장 암호이자 관리자 로그인의 절반이다)
+    view = public_view(state)
+    view.pop("code", None)
+    return view
 
 
 def public_view(state):
@@ -764,6 +794,16 @@ def league_room(code):
     return render_template("league/room.html", code=normalize_code(code), is_admin=False, room_name=_room_name(code), roster=[])
 
 
+@league_bp.route("/league/v/<view>")
+def league_view(view):
+    # 보기 전용 대진표: 참가 코드 없이 본다 (참가·결과 보고·운영은 할 수 없다)
+    try:
+        room_name = load_state_by_view(view)["name"]
+    except Exception:
+        room_name = None
+    return render_template("league/room.html", code="", is_admin=False, viewer=True, view=view, room_name=room_name, roster=[])
+
+
 @league_bp.route("/league/<code>/admin")
 def league_admin(code):
     members, _ = _members()
@@ -893,6 +933,11 @@ def _parse_groups(raw):
 def api_state(code):
     state = load_state(code)
     return _ok(state)
+
+
+@league_bp.route("/api/league/v/<view>")
+def api_view_state(view):
+    return jsonify({"tournament": viewer_view(load_state_by_view(view))})
 
 
 @league_bp.route("/api/league/<code>/join", methods=["POST"])
