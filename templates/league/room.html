@@ -541,6 +541,10 @@
     // 부전승은 카드를 그리지 않고 그 선수를 다음 라운드 카드에 바로 올린다. 각 경기는 아래에 달린 선수 수만큼 세로 공간을 차지하므로
     // 9명이면 예선 1경기 + 8강 4경기가 촘촘하게 놓인다. 수정 모드에서는 1라운드의 빈 자리까지 모두 보여 끌어 놓을 수 있게 한다.
     const BK = { pitch: 58, cardW: 176, gap: 32, cardH: 92 };
+    // 운영진이 결과를 다루는 화면은 카드 아래에 조작 줄(점수판·입력·확정·되돌리기)이 붙으므로 칸과 카드 높이를 넉넉히 잡는다
+    const hasActions = () => canAdmin && tournament.status !== 'draft';
+    const pitch = () => (hasActions() ? 80 : BK.pitch);
+    const cardH = () => (hasActions() ? 150 : BK.cardH);
     function renderTree(b) {
         const edit = editMode && canAdmin;
         const byId = Object.fromEntries(b.matches.map((m) => [m.id, m]));
@@ -551,17 +555,17 @@
         // 상위 라운드의 부전승 노드(bye)는 카드를 그리지 않고, 그 선수를 다음 카드에 바로 보여 준다
         for (let r = 1; r < b.rounds; r++) rounds[r].forEach((m) => { shown[m.id] = !m.bye; leaves[m.id] = rounds[r - 1].filter((c) => c.next === m.id).reduce((sum, c) => sum + leaves[c.id], 0); });
         let y = 0;
-        rounds[0].forEach((m) => { center[m.id] = y + leaves[m.id] * BK.pitch / 2; y += leaves[m.id] * BK.pitch; });
+        rounds[0].forEach((m) => { center[m.id] = y + leaves[m.id] * pitch() / 2; y += leaves[m.id] * pitch(); });
         const total = y;
         for (let r = 1; r < b.rounds; r++) rounds[r].forEach((m) => {
             const kids = rounds[r - 1].filter((c) => c.next === m.id).sort((p, q) => p.slot - q.slot);
-            const top = center[kids[0].id] - leaves[kids[0].id] * BK.pitch / 2;
-            center[m.id] = top + leaves[m.id] * BK.pitch / 2;
+            const top = center[kids[0].id] - leaves[kids[0].id] * pitch() / 2;
+            center[m.id] = top + leaves[m.id] * pitch() / 2;
         });
         const colX = (r) => (r - 1) * (BK.cardW + BK.gap);
         const width = b.rounds * BK.cardW + (b.rounds - 1) * BK.gap;
         const thirdTop = total + 16;
-        const height = total + (b.third ? 16 + 20 + BK.cardH + 24 : 8);
+        const height = total + (b.third ? 16 + 20 + cardH() + 24 : 8);
 
         const headers = rounds.map((list, i) => {
             const r = i + 1;
@@ -617,27 +621,34 @@
         let nextReal = m.next ? byId[m.next] : null;
         while (nextReal && nextReal.bye) nextReal = nextReal.next ? byId[nextReal.next] : null;
         const canReset = m.status === 'confirmed' && (m.third || !nextReal || nextReal.status !== 'confirmed');
-        const iconButton = (icon, label, attrs, style) => `<button type="button" ${attrs} title="${label}" aria-label="${label}" class="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors ${style}"><i data-lucide="${icon}" class="h-3.5 w-3.5"></i></button>`;
-        const quiet = 'text-zinc-500 hover:bg-zinc-100 hover:text-red-600 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-red-400';
-        const strong = 'bg-red-600 text-white hover:bg-red-700 dark:bg-rubber dark:hover:bg-red-500';
-        let controls = '';
+        // 조작 줄: 글자와 함께 카드 폭을 나눠 갖는 칸. 주 동작(보고가 있으면 확정, 없으면 입력)은 빨간 글씨.
+        const plain = 'text-zinc-500 hover:bg-zinc-50 hover:text-red-600 dark:text-zinc-400 dark:hover:bg-zinc-800/60 dark:hover:text-red-400';
+        const main = 'text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-500/10';
+        const action = (label, icon, attrs, tone, href) => {
+            const cls = `flex h-7 min-w-0 flex-1 items-center justify-center gap-1 text-[11px] font-semibold transition-colors ${tone}`;
+            const inner = `<i data-lucide="${icon}" class="h-3 w-3 flex-shrink-0"></i>${label}`;
+            return href ? `<a href="${href}" ${attrs} class="${cls}">${inner}</a>` : `<button type="button" ${attrs} class="${cls}">${inner}</button>`;
+        };
+        const actions = [];
         if (canAdmin && !drafting && m.status === 'pending') {
-            controls = `<a href="${root.dataset.scoreboard}?league=${code}&match=${m.id}" title="점수판으로 경기" aria-label="점수판으로 경기" class="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors ${quiet}"><i data-lucide="trophy" class="h-3.5 w-3.5"></i></a>
-                ${m.report ? iconButton('check', '보고대로 확정', `data-confirm-report="${m.id}"`, strong) : ''}
-                ${iconButton('pencil', m.report ? '다르게 입력' : '결과 입력', `data-confirm="${m.id}"`, m.report ? quiet : strong)}`;
+            actions.push(action('점수판', 'trophy', 'aria-label="점수판으로 경기"', plain, `${root.dataset.scoreboard}?league=${code}&match=${m.id}`));
+            actions.push(action('입력', 'pencil', `data-confirm="${m.id}" aria-label="${m.report ? '다르게 입력' : '결과 입력'}"`, m.report ? plain : main));
+            if (m.report) actions.push(action('확정', 'check', `data-confirm-report="${m.id}" aria-label="보고대로 확정"`, main));
         } else if (canAdmin && canReset) {
-            controls = iconButton('rotate-ccw', '되돌리기', `data-reset="${m.id}"`, quiet);
+            actions.push(action('되돌리기', 'rotate-ccw', `data-reset="${m.id}"`, plain));
         }
+        // 보고 줄은 한 줄로 (두 줄로 늘면 옆 카드와 겹친다). 게임 점수는 눌러 보면(title) 나오고, 확인 대기 패널과 결과 입력 창에도 있다.
+        const reportFull = m.report ? `${m.report.by} 보고 · 승자 ${m.report.winner}${m.report.games ? ` (${m.report.games.map(([a, c]) => `${a}:${c}`).join(', ')})` : ''}` : '';
         const report = m.report && m.status === 'pending'
-            ? `<p class="border-t border-zinc-100 px-2.5 py-1 text-[11px] leading-4 text-amber-700 dark:border-zinc-800 dark:text-amber-300"><strong>${escapeHtml(m.report.by)}</strong> 보고 · 승자 ${escapeHtml(m.report.winner)}${m.report.games ? ` (${m.report.games.map(([a, c]) => `${a}:${c}`).join(', ')})` : ''}</p>` : '';
-        return `<article data-match="${m.id}" class="rounded-xl border bg-white shadow-sm dark:bg-zinc-900 ${m.status === 'pending' && !drafting ? 'border-red-300 dark:border-red-500/40' : 'border-zinc-200 dark:border-zinc-800'}">
-            <div class="flex h-6 items-center justify-between gap-1 px-2.5 text-[11px] font-semibold leading-none ${chip[1]}">
+            ? `<p title="${escapeHtml(reportFull)}" class="truncate border-t border-zinc-100 px-2.5 py-1 text-[11px] leading-4 text-amber-700 dark:border-zinc-800 dark:text-amber-300"><strong>${escapeHtml(m.report.by)}</strong> 보고 · 승자 ${escapeHtml(m.report.winner)}</p>` : '';
+        return `<article data-match="${m.id}" class="overflow-hidden rounded-xl border bg-white shadow-sm dark:bg-zinc-900 ${m.status === 'pending' && !drafting ? 'border-red-300 dark:border-red-500/40' : 'border-zinc-200 dark:border-zinc-800'}">
+            <div class="flex h-6 items-center px-2.5 text-[11px] font-semibold leading-none ${chip[1]}">
                 <span class="truncate">${chip[0]}<span class="${chip[0] ? 'ml-1.5 ' : ''}font-medium text-zinc-400 dark:text-zinc-500">${m.best_of}판 ${Math.floor(m.best_of / 2) + 1}선</span></span>
-                ${controls ? `<span class="flex flex-shrink-0 items-center gap-0.5">${controls}</span>` : ''}
             </div>
             <div class="border-t border-zinc-100 dark:border-zinc-800">${row(m.players[0], 0)}${row(m.players[1], 1)}</div>
             ${games ? `<p class="border-t border-zinc-100 px-2.5 py-1 text-[11px] leading-4 tabular-nums text-zinc-400 dark:border-zinc-800 dark:text-zinc-500">${games}</p>` : ''}
             ${report}
+            ${actions.length ? `<div class="flex divide-x divide-zinc-100 border-t border-zinc-100 dark:divide-zinc-800 dark:border-zinc-800">${actions.join('')}</div>` : ''}
         </article>`;
     }
 
