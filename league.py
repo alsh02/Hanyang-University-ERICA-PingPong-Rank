@@ -1,7 +1,8 @@
 """리그전(토너먼트) 운영.
 
 운영진이 방을 개설하면 참가 코드가 생기고, 부원들은 코드로 들어와 명단에서 자기 이름을 고른다.
-운영진이 시작하면 참가자를 부수 기준으로 상위부·중위부·하위부로 나눠 그룹마다 단판 토너먼트 대진표를 만든다.
+운영진이 '대진표 만들기'를 누르면 참가자를 부수 기준으로 상위부·중위부·하위부로 나눠 그룹마다 단판 토너먼트 대진표를 만든다(편성 중).
+편성 중에는 운영진만 대진표를 보고 고치며, 참가 접수는 '토너먼트 시작'을 누를 때까지 열려 있다.
 경기가 끝나면 선수(또는 점수판)가 결과를 보고하고, 운영진이 확정하면 승자가 다음 대진으로 올라간다.
 모든 그룹의 우승자가 정해지면 리그전이 끝난다.
 
@@ -37,7 +38,8 @@ WRITE_LIMIT = 240        # 10분당 쓰기 허용 횟수 (공개 주소이므로
 CODE_ALPHABET = "0123456789"   # 참가 코드·관리자 코드 모두 숫자 6자리
 ADMIN_LOGIN_LIMIT = 30         # 10분당 관리자 코드 입력 시도 허용 횟수
 BEST_OF_FROM_CHOICES = (0, 2, 4, 8, 16, 32)   # 5판 3선으로 바꾸는 시점(남은 선수 수). 0은 전환 없음
-STATUS_LABELS = {"lobby": "참가 접수 중", "running": "진행 중", "finished": "종료"}
+STATUS_LABELS = {"lobby": "참가 접수 중", "draft": "대진 편성 중", "running": "진행 중", "finished": "종료"}
+OPEN_STATUSES = ("lobby", "draft")   # 참가 접수가 열려 있는 상태 (편성 중에도 시작 전까지는 받는다)
 
 # 기본 그룹 기준: 부수표의 상위부(1~4부) · 중위부(5~7부) · 하위부(8부~). 0부 이하도 상위부.
 DEFAULT_GROUPS = [
@@ -272,6 +274,7 @@ def assemble(state, logs):
     state["_joins"], state["_reports"] = joins, reports
     state["rev"] = len(logs)   # 로그 줄 수. 화면은 이보다 작은 값의 응답(다른 인스턴스의 오래된 캐시)을 무시한다
     compute_participants(state)
+    place_all(state)
 
     # 운영진 두 명이 거의 동시에 저장하면 나중 스냅숏이 앞 스냅숏을 덮는다. 덮인 쪽의 기록은 로그에 남아 있으므로
     # 스냅숏의 applied에 없는 기록을 로그 순서대로 다시 적용해 되살린다. 지금 상태와 맞지 않는 기록(같은 경기를 둘이 확정 등)은 건너뛴다.
@@ -386,7 +389,7 @@ def list_rooms():
             "participants": len(state["participants"]), "created_at": state["created_at"][:16],
             "groups": [g["name"] for g in state.get("groups", [])],
             # 코드는 어떤 상태에서도 내보내지 않는다. 진행 중·종료 방은 보기 전용 키로 대진표를 연다.
-            "view": view_key(state) if state["status"] != "lobby" and state.get("admin_key") else None,
+            "view": view_key(state) if state["status"] not in OPEN_STATUSES and state.get("admin_key") else None,
         })
     rooms.sort(key=lambda r: r["created_at"], reverse=True)
     return rooms[:ROOM_LIST_LIMIT]
@@ -420,10 +423,13 @@ def viewer_view(state):
     return view
 
 
-def public_view(state):
-    # 참가자 화면에 보내는 상태: 운영 키·참가 토큰·내부 값(밑줄로 시작, 적용한 운영 기록 목록)은 뺀다
+def public_view(state, admin=False):
+    # 참가자 화면에 보내는 상태: 운영 키·참가 토큰·내부 값(밑줄로 시작, 적용한 운영 기록 목록)은 뺀다.
+    # 편성 중인 대진표는 운영진에게만 보낸다 — 참가자는 시작한 뒤에 본다.
     view = {k: v for k, v in state.items() if not k.startswith("_") and k not in ("admin_key", "admin_code", "applied")}
     view["status_label"] = STATUS_LABELS.get(state["status"], state["status"])
+    if state["status"] == "draft" and not admin:
+        view["brackets"], view["unplaced"] = {}, {}
     return view
 
 
@@ -468,8 +474,7 @@ def build_bracket(group_key, names, seed_mode, divisions, fmt, rng=None):
 
     n = len(names)
     if n == 1:
-        return {"size": 1, "rounds": 0, "matches": [], "champion": names[0], "labels": {}, "entrants": {},
-                "third": None, "third_winner": None, "third_possible": False}
+        return build_from_first(group_key, [[names[0], None]], fmt)
 
     if seed_mode == "division":
         # 상위-하위 순으로 짝을 짓고(1-끝, 2-끝-1 …), 상위 짝끼리는 멀리 떨어뜨린다. 홀수면 최상위가 1라운드 부전승.
@@ -485,6 +490,15 @@ def build_bracket(group_key, names, seed_mode, divisions, fmt, rng=None):
             first.append([bye_player, None])
     else:
         first = [[names[i], names[i + 1] if i + 1 < n else None] for i in range(0, n, 2)]
+    return build_from_first(group_key, first, fmt)
+
+
+def build_from_first(group_key, first, fmt):
+    # 1라운드 배치([[선수, 선수 또는 None], ...])에서 위 라운드를 아래에서 위로 짝지어 대진표를 만든다
+    n = sum(1 for pair in first for p in pair if p)
+    if n == 1:
+        return {"size": 1, "rounds": 0, "matches": [], "champion": next(p for pair in first for p in pair if p), "labels": {},
+                "entrants": {}, "third": None, "third_winner": None, "third_possible": False}
 
     def node(rnd, idx, players, bye=False):
         m = {"id": f"{group_key}-{rnd}-{idx}", "round": rnd, "index": idx, "players": players,
@@ -564,10 +578,56 @@ def rebuild_group(state, key, seed=None, rng=None):
     third_on = bool(state["brackets"].get(key, {}).get("third"))
     if names:
         state["brackets"][key] = build_bracket(key, names, seed or state["seed"], divisions, state["format"], rng)
-        if third_on and state["brackets"][key]["rounds"] >= 2:
-            set_third_place(state["brackets"][key], key, state["format"], True)
+        _keep_third(state, key, third_on)
     else:
         state["brackets"].pop(key, None)
+
+
+def _keep_third(state, key, third_on):
+    # 다시 만든 대진표에도 3·4위전을 이어 둔다 (새 대진에서 둘 수 없으면 뺀다)
+    bracket = state["brackets"][key]
+    if third_on and bracket["rounds"] >= 2 and bracket.get("third_possible"):
+        set_third_place(bracket, key, state["format"], True)
+
+
+def round1_layout(bracket):
+    # 1라운드 자리 배치: [[선수, 선수 또는 None], ...]. 혼자인 그룹은 [[그 사람, None]].
+    if not bracket["matches"]:
+        return [[bracket["champion"], None]] if bracket.get("champion") else []
+    return [list(m["players"]) for m in sorted((m for m in bracket["matches"] if m["round"] == 1), key=lambda m: m["index"])]
+
+
+def place_players(state, key):
+    # 편성 중: 그룹 참가자와 대진표를 맞춘다. 대진표에 없는 사람은 첫 빈 자리(부전승 자리)에, 빈 자리가 없으면 맨 끝에 넣고,
+    # 그룹을 떠난 사람은 뺀다. 운영진이 옮겨 둔 나머지 자리는 그대로 둔다. 상태가 같으면 어느 인스턴스에서 해도 결과가 같다.
+    names = [p["name"] for p in state["participants"] if p["group"] == key]
+    bracket = state["brackets"].get(key)
+    if not names:
+        state["brackets"].pop(key, None)
+        return
+    before = round1_layout(bracket) if bracket else []
+    wanted = set(names)
+    layout = [pair for pair in ([p if p in wanted else None for p in pair] for pair in before) if any(pair)]
+    placed = {p for pair in layout for p in pair if p}
+    for name in names:
+        if name in placed:
+            continue
+        empty = next(((i, j) for i, pair in enumerate(layout) for j in (0, 1) if pair[j] is None), None)
+        if empty:
+            layout[empty[0]][empty[1]] = name
+        else:
+            layout.append([name, None])
+    if layout == before:
+        return
+    state["brackets"][key] = build_from_first(key, layout, state["format"])
+    _keep_third(state, key, bool(bracket and bracket.get("third")))
+
+
+def place_all(state):
+    # 편성 중이면 모든 그룹에서 대진표 밖 참가자를 자리에 넣는다 (참가는 로그에만 들어오므로 읽을 때마다 맞춘다)
+    if state["status"] == "draft":
+        for g in state["groups"]:
+            place_players(state, g["key"])
 
 
 def swap_slots(bracket, a, b):
@@ -787,17 +847,33 @@ def _retract(bracket, by_id, match):
         nxt["status"] = "waiting"
 
 
-def start_tournament(state, rng=None):
-    if state["status"] != "lobby":
-        raise LeagueError("이미 시작한 토너먼트입니다.")
-    if len(state["participants"]) < 2:
-        raise LeagueError("참가자가 2명 이상이어야 시작할 수 있습니다.")
+def _build_all(state, rng):
     divisions = {p["name"]: p["division"] for p in state["participants"]}
     state["brackets"] = {}
     for g in state["groups"]:
         names = [p["name"] for p in state["participants"] if p["group"] == g["key"]]
         if names:
             state["brackets"][g["key"]] = build_bracket(g["key"], names, state["seed"], divisions, state["format"], rng)
+
+
+def make_draft(state, rng=None):
+    # 접수 중 → 편성 중: 지금 참가자로 그룹별 대진표를 만든다. 참가 접수는 시작할 때까지 계속 열려 있다.
+    if state["status"] != "lobby":
+        raise LeagueError("이미 대진표를 만들었습니다." if state["status"] == "draft" else "이미 시작한 토너먼트입니다.")
+    if len(state["participants"]) < 2:
+        raise LeagueError("참가자가 2명 이상이어야 대진표를 만들 수 있습니다.")
+    _build_all(state, rng)
+    state["status"] = "draft"
+
+
+def start_tournament(state, rng=None):
+    # 편성 중 → 진행 중: 참가 접수를 마감하고 고쳐 둔 대진표 그대로 시작한다. (접수 중에서 바로 시작하면 대진표도 이때 만든다)
+    if state["status"] not in OPEN_STATUSES:
+        raise LeagueError("이미 시작한 토너먼트입니다.")
+    if len(state["participants"]) < 2:
+        raise LeagueError("참가자가 2명 이상이어야 시작할 수 있습니다.")
+    if state["status"] == "lobby":
+        _build_all(state, rng)
     state["status"] = "running"
     state["started_at"] = kst_now()
     refresh_status(state)
@@ -825,13 +901,15 @@ def apply_op(state, op):
     # 무작위 배치는 기록 id를 씨앗으로 쓴다. 참가자가 같으면 어느 인스턴스에서 다시 적용해도 같은 대진이 나오고,
     # 동시에 들어온 추가 때문에 참가자가 늘었다면 되살릴 때 그 사람까지 넣어 다시 짠다.
     kind, rng = op.get("op"), random.Random(op["id"])
-    if kind == "start":
+    if kind == "draft":
+        make_draft(state, rng)
+    elif kind == "start":
         start_tournament(state, rng)
     elif kind == "settings":
         apply_settings(state, op.get("best_of_from"))
     elif kind == "third":
-        if state["status"] not in ("running", "finished"):
-            raise LeagueError("시작한 뒤에 정할 수 있습니다.")
+        if state["status"] not in ("draft", "running", "finished"):
+            raise LeagueError("대진표를 만든 뒤에 정할 수 있습니다.")
         if op.get("group") not in state["brackets"]:
             raise LeagueError("그룹이 올바르지 않습니다.")
         set_third_place(state["brackets"][op["group"]], op["group"], state["format"], bool(op.get("enabled")))
@@ -839,8 +917,8 @@ def apply_op(state, op):
     elif kind == "rebuild":
         group = op.get("group")
         # 대진표가 아직 없는 그룹도 된다 (대진표 밖에 남은 참가자를 넣을 때)
-        if state["status"] != "running" or group not in {g["key"] for g in state["groups"]}:
-            raise LeagueError("진행 중인 그룹만 다시 만들 수 있습니다.")
+        if state["status"] not in ("draft", "running") or group not in {g["key"] for g in state["groups"]}:
+            raise LeagueError("대진표를 만든 뒤에 다시 만들 수 있습니다.")
         if op.get("seed") not in ("random", "division"):
             raise LeagueError("배치 방식이 올바르지 않습니다.")
         _editable_groups(state, {group})
@@ -848,8 +926,8 @@ def apply_op(state, op):
         refresh_status(state)
     elif kind in ("move", "swap"):
         group = op.get("group")
-        if state["status"] != "running" or group not in state["brackets"]:
-            raise LeagueError("진행 중인 그룹만 고칠 수 있습니다.")
+        if state["status"] not in ("draft", "running") or group not in state["brackets"]:
+            raise LeagueError("대진표를 만든 뒤에 고칠 수 있습니다.")
         _editable_groups(state, {group})
         if kind == "move":
             move_player(state["brackets"][group], op.get("name"), op.get("match"), op.get("slot"))
@@ -882,7 +960,7 @@ def apply_op(state, op):
             _editable_groups(state, affected)
             state["group_overrides"][name] = op["group"]
         compute_participants(state)
-        _rebuild_if_running(state, affected, rng)
+        _update_brackets(state, affected, rng)
     elif kind == "add":
         # 참가 로그는 이 기록과 같은 호출로 바로 앞에 들어간다 (요청을 처리할 때는 _joins에 미리 넣어 둔다)
         names = op.get("names") or []
@@ -890,7 +968,7 @@ def apply_op(state, op):
         compute_participants(state)
         affected = {p["group"] for p in state["participants"] if p["name"] in names}
         _editable_groups(state, affected)
-        _rebuild_if_running(state, affected, rng)
+        _update_brackets(state, affected, rng)
     else:
         raise LeagueError("알 수 없는 운영 기록입니다.")
 
@@ -904,13 +982,17 @@ def _members():
 
 
 def _require_admin(state):
-    key = request.headers.get("X-League-Key") or (request.get_json(silent=True) or {}).get("admin_key") or ""
-    if not key or not secrets.compare_digest(key, state.get("admin_key", "")):
+    if not _is_admin(state):
         raise LeagueError("운영진만 할 수 있는 작업입니다.", 403)
 
 
+def _is_admin(state):
+    key = request.headers.get("X-League-Key") or (request.get_json(silent=True) or {}).get("admin_key") or ""
+    return bool(key) and secrets.compare_digest(key, state.get("admin_key", ""))
+
+
 def _ok(state, **extra):
-    return jsonify({"tournament": public_view(state), **extra})
+    return jsonify({"tournament": public_view(state, admin=_is_admin(state)), **extra})
 
 
 def _run(state, op, joins=(), **extra):
@@ -1118,7 +1200,7 @@ def api_view_state(view):
 @league_bp.route("/api/league/<code>/join", methods=["POST"])
 def api_join(code):
     state = load_state(code)
-    if state["status"] != "lobby":
+    if state["status"] not in OPEN_STATUSES:
         raise LeagueError("참가 접수가 끝난 토너먼트입니다.")
     _check_write_limit()
     members, _ = _members()
@@ -1157,11 +1239,14 @@ def _group_name(state, key):
     return next((g["name"] for g in state["groups"] if g["key"] == key), key)
 
 
-def _rebuild_if_running(state, keys, rng=None):
-    if state["status"] == "running":
-        for key in sorted(keys):   # 씨앗 하나로 여러 그룹을 섞으므로 순서를 고정한다 (set 순서는 인스턴스마다 다르다)
+def _update_brackets(state, keys, rng=None):
+    # 참가자가 바뀐 그룹의 대진표: 편성 중이면 빈 자리에 넣고(고쳐 둔 자리 유지), 진행 중이면 그 그룹을 새로 짠다
+    for key in sorted(keys):   # 씨앗 하나로 여러 그룹을 섞으므로 순서를 고정한다 (set 순서는 인스턴스마다 다르다)
+        if state["status"] == "draft":
+            place_players(state, key)
+        elif state["status"] == "running":
             rebuild_group(state, key, rng=rng)
-        refresh_status(state)
+    refresh_status(state)
 
 
 @league_bp.route("/api/league/<code>/participants", methods=["POST"])
@@ -1229,6 +1314,14 @@ def api_move(code, group):
     if not name or not match_id or slot not in (0, 1):
         raise LeagueError("옮길 선수와 자리를 알려 주세요.")
     return _run(state, new_op("move", group=group, name=name, match=match_id, slot=slot))
+
+
+@league_bp.route("/api/league/<code>/draft", methods=["POST"])
+def api_draft(code):
+    # 운영진: 접수 중 → 편성 중 (대진표를 만들어 고칠 수 있게 한다. 참가 접수는 계속 열려 있다)
+    state = load_state(code, force=True)
+    _require_admin(state)
+    return _run(state, new_op("draft"))
 
 
 @league_bp.route("/api/league/<code>/start", methods=["POST"])

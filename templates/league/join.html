@@ -29,7 +29,7 @@
     <ul id="room-list" class="space-y-2">
         {% for room in rooms %}
         <li>
-            {% if room.status == 'lobby' %}
+            {% if room.status in ('lobby', 'draft') %}
             <button type="button" data-room="{{ room.name }}" aria-pressed="false"
                     class="flex w-full items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-3 text-left transition-colors hover:border-red-400 aria-[pressed=true]:border-red-600 aria-[pressed=true]:ring-2 aria-[pressed=true]:ring-red-500/30 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-red-500 dark:aria-[pressed=true]:border-red-500">
                 <span class="min-w-0">
@@ -101,7 +101,24 @@
     const button = document.getElementById('join-button'), error = document.getElementById('join-error'), picked = document.getElementById('name-picked');
     let chosen = null, options = [];
 
-    codeInput.addEventListener('input', () => { codeInput.value = codeInput.value.replace(/[^0-9]/g, '').slice(0, 6); sync(); });
+    codeInput.addEventListener('input', () => { codeInput.value = codeInput.value.replace(/[^0-9]/g, '').slice(0, 6); sync(); lookUp(); });
+
+    // 코드 6자리가 채워지면(QR로 열었거나 직접 친 경우) 어느 방인지 이름을 보여 준다
+    let lookedUp = '';
+    async function lookUp() {
+        const code = codeInput.value;
+        if (code.length !== 6 || code === lookedUp || room) return;
+        lookedUp = code;
+        const label = document.getElementById('room-picked');
+        try {
+            const response = await fetch(`/api/league/${code}`);
+            const data = await response.json().catch(() => ({}));
+            if (codeInput.value !== code || room) return;
+            if (!response.ok) { label.textContent = '· 그 코드의 방이 없습니다'; return; }
+            const t = data.tournament;
+            label.textContent = ['lobby', 'draft'].includes(t.status) ? `· '${t.name}' 방` : `· '${t.name}' 방은 참가 접수가 끝났습니다`;
+        } catch (e) { lookedUp = ''; }
+    }
 
     // 목록에서 방을 고르면 그 방의 코드를 넣도록 안내하고, 보낼 때 방 이름도 함께 보내 다른 방 코드를 걸러 낸다
     let room = null;
@@ -109,6 +126,7 @@
         const item = event.target.closest('[data-room]');
         if (!item) return;
         room = item.getAttribute('aria-pressed') === 'true' ? null : item.dataset.room;
+        lookedUp = '';
         document.querySelectorAll('[data-room]').forEach((el) => el.setAttribute('aria-pressed', String(el.dataset.room === room)));
         document.getElementById('room-picked').textContent = room ? `· '${room}' 방의 코드` : '';
         if (room) { codeInput.focus(); codeInput.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
@@ -161,6 +179,11 @@
         }
     });
     sync();
+    if (codeInput.value.length === 6) {
+        // QR로 들어오면 코드가 채워져 있으니 이름 칸이 보이게 내려 준다
+        lookUp();
+        input.scrollIntoView({ block: 'center' });
+    }
 })();
 </script>
 {% endblock %}
