@@ -1,6 +1,6 @@
 # 리그전(토너먼트) 기능 인수인계 문서
 
-기준: 2026-09-30, 브랜치 `feature/league` (**아직 main에 머지하지 않음**). 마지막 갱신: 동시 저장 보호(운영 기록 로그) · 대진표 밖 참가자 알림 · 끌기 자동 스크롤.
+기준: 2026-09-30, 브랜치 `feature/league` (**아직 main에 머지하지 않음**). 마지막 갱신: 편성 중 단계(대진표 만들기 → 고치기 → 시작) · 참가 QR · 관리자 코드만으로 운영 화면 열기.
 다른 세션·다른 사람이 이 문서만 읽고 이어서 작업할 수 있도록 지금까지의 논의와 구조를 정리했다.
 
 ## 0. 한눈에 보기
@@ -22,7 +22,7 @@ flowchart LR
         H[/league 첫 화면<br>개설·참가 버튼/]
         N[/league/new<br>개설/]
         J[/league/join<br>방 목록 + 코드 + 이름/]
-        A[/league/admin<br>관리자 코드 로그인/]
+        A[/league/admin<br>관리자 코드만으로 로그인/]
         R[/league/CODE<br>참가자 화면/]
         RA[/league/CODE/admin<br>운영 화면/]
         V[/league/v/KEY<br>보기 전용 대진표/]
@@ -66,13 +66,15 @@ flowchart LR
 flowchart TD
     C[운영진: 토너먼트 개설<br>이름 · 11/21점 · 5판3선 전환 라운드 · 무작위/부수 순 · 그룹 기준] --> K[참가 코드 6자리 + 관리자 코드 6자리 발급<br>운영 키는 기기 localStorage]
     K --> L[접수 중]
-    L -->|참가자 폰: 방 목록에서 방 선택 → 코드 입력 → 명단에서 이름| P[참가 로그 추가]
+    L -->|참가자 폰: 참가 QR 찍기 또는 방 목록에서 방 선택 → 코드 입력 → 명단에서 이름| P[참가 로그 추가]
     L -->|운영진: 명단 검색 → 클릭 / 일괄 추가| P
     P --> G[부수로 그룹 자동 배정<br>상위 ~4부 · 중위 5~7부 · 하위 8부~<br>부수 없으면 '배정 확인']
-    G --> ST[운영진: 토너먼트 시작]
-    ST --> B[그룹별 대진표 생성<br>아래에서 위로 짝짓기]
+    G --> DR[운영진: 대진표 만들기 → 편성 중<br>그룹별 대진표 생성 · 아래에서 위로 짝짓기<br>운영진만 보고, 참가 접수는 계속]
+    DR --> ED[대진 수정: 끌어 놓기 · 무작위 재배치 · 3·4위전<br>참가자 카드로 그룹 이동·제외<br>새 참가자는 빈 자리(부전승 자리)나 맨 끝에 자동]
+    ED --> ST[운영진: 토너먼트 시작<br>참가 접수 마감 · 선수 폰에 대진표]
+    ST --> B[진행 중]
     B --> E{결과 없는 그룹?}
-    E -->|예| ED[대진 수정: 끌어 놓기 · 무작위 재배치<br>참가자 추가/제외/그룹 이동 시 재생성]
+    E -->|예| RE[대진 수정 계속 가능<br>참가자 추가/제외 시 그 그룹 재생성]
     B --> PL[경기: 점수판 또는 폰에서 결과 보고]
     PL --> AL[운영진 알림: 확인 대기 패널 · 소리 · 진동 · 탭 배지]
     AL --> CF[운영진 확정 → 승자가 다음 카드로<br>부전승 노드는 자동 통과]
@@ -98,9 +100,9 @@ flowchart TD
 | `app.py` | 시트 연결(`open_spreadsheet`, `open_records_spreadsheet`, `open_league_spreadsheet`), 부원 명단, 경기기록, 점수판, 맨 아래 `league.configure(...)` + `register_blueprint` |
 | `templates/league/home.html` | 개설/참가 버튼, 관리자 코드로 열기, 마지막 방 이어보기 |
 | `templates/league/new.html` | 개설 폼(점수·5판 전환·배치·그룹 기준), 개설 중 안내 상자 |
-| `templates/league/join.html` | 열린 방 목록(접수 중 = 코드 입력 버튼, 진행/종료 = 대진표 보기 링크), 코드·이름 입력, 참가 중 안내 상자 |
-| `templates/league/admin.html` | 참가 코드 + 관리자 코드로 운영 화면 열기 |
-| `templates/league/room.html` | 참가자·운영진·보기 전용이 함께 쓰는 방 화면(접수 카드, 참가자 추가, 대진표 트리, 끌어 놓기, 결과 패널, 알림, 폴링) |
+| `templates/league/join.html` | 열린 방 목록(접수 중·편성 중 = 코드 입력 버튼, 진행/종료 = 대진표 보기 링크), 코드·이름 입력(코드 6자리가 채워지면 방 이름 표시 — QR로 연 경우 포함), 참가 중 안내 상자 |
+| `templates/league/admin.html` | **관리자 코드 하나**로 운영 화면 열기 (`POST /api/league/admin-login`) |
+| `templates/league/room.html` | 참가자·운영진·보기 전용이 함께 쓰는 방 화면(접수 카드, 참가자 추가, 편성 중 시작 버튼, 대진표 트리, 끌어 놓기, 결과 패널, 알림, 참가 QR 패널, 폴링). QR은 cdnjs `qrcode-generator` 1.4.4(운영 화면에서만 defer로 불러옴) |
 | `templates/scoreboard.html` | `?league=CODE&match=ID`면 선수·판수 고정, 왼쪽 위 버튼 '대진표로', 저장 시 리그전 결과 보고 |
 | `templates/base.html` | 상단 메뉴 4개(부원 검색·대시보드·점수판·리그전), `.select-chevron`, 푸터 인스타 |
 | `public/static/hangul-search.js` | 초성 검색(`window.HangulSearch.matchName`) — 검색·점수판·리그전 공용 |
@@ -120,7 +122,10 @@ flowchart TD
   두 운영진이 거의 동시에 저장하면 나중 스냅숏이 앞 스냅숏을 덮지만, 읽을 때 `assemble()`이 스냅숏의 `applied`에 없는 운영 기록을 로그 순서대로 다시 적용해 되살린다(지금 상태와 맞지 않는 기록 — 같은 경기를 둘이 확정 등 — 은 건너뜀).
   무작위 배치는 운영 기록 id를 씨앗으로 써서(`random.Random(id)`) 어느 인스턴스에서 다시 적용해도 같은 대진이 나오고, 동시에 추가된 참가자는 되살릴 때 함께 들어간다.
   이 보호가 생기기 전에는 '테스트1'에서 진행 중 동시 추가 24명 중 18명이 대진표에서 빠졌다(프리뷰 데이터로 확인, 가짜 서버에 지연을 넣어 재현).
-* 상태JSON 주요 키: `code, name, status(lobby|running|finished), format{target,best_of,best_of_from}, seed(random|division), groups[{key,name,min,max}], group_overrides, removed[], brackets{group: bracket}, applied[], admin_key, admin_code, created_at, updated_at, finished_at`.
+* 상태: `lobby`(참가 접수 중) → `draft`(대진 편성 중, 참가 접수는 계속) → `running`(진행 중, 접수 마감) → `finished`(종료).
+  편성 중에는 참가(로그에만 들어옴)가 올 때마다 읽는 쪽에서 `place_all`로 그룹 대진표의 첫 빈 자리(부전승 자리), 없으면 맨 끝에 넣는다 — 운영진이 옮긴 자리는 그대로(`place_players`, 1라운드 배치에서 `build_from_first`로 다시 쌓음).
+  편성 중인 대진표는 운영 키가 있는 요청에만 보낸다(`public_view(admin=…)`, 참가자·보기 전용에는 `brackets: {}`).
+* 상태JSON 주요 키: `code, name, status(lobby|draft|running|finished), format{target,best_of,best_of_from}, seed(random|division), groups[{key,name,min,max}], group_overrides, removed[], brackets{group: bracket}, applied[], admin_key, admin_code, created_at, updated_at, finished_at`.
   화면에는 `public_view()`로 `admin_key, admin_code, applied`와 밑줄로 시작하는 내부 값(`_tokens, _joins, _reports, _row_no`)을 뺀 것만, 보기 전용에는 `code`까지 뺀 것만 보낸다.
   매번 계산해 붙이는 값: `participants`, 경기별 `report`, `unplaced`(그룹 대진표에 자리가 없는 참가자), `rev`(이 방의 로그 줄 수 — 화면은 지금보다 작은 `rev`의 응답을 버린다).
 * 참가자는 로그의 `참가` 항목으로 만들고(`added_by_admin`, 토큰), 같은 이름이 본인 폰으로 참가하면 토큰이 연결된다.
@@ -167,7 +172,8 @@ flowchart TD
 | `POST /api/league` | 공개 | 개설 → `code, admin_key, admin_code` |
 | `GET /api/league/<code>` | 공개 | 방 상태(public_view) |
 | `GET /api/league/v/<view>` | 공개 | 보기 전용 상태(코드 없음) |
-| `POST .../admin-login {admin_code}` | 공개(제한) | 관리자 코드 → 운영 키 |
+| `POST /api/league/admin-login {admin_code}` | 공개(제한) | 관리자 코드만으로 방을 찾아 → `code, admin_key, admin_url` (관리자 코드는 방마다 다르게 발급) |
+| `POST .../admin-login {admin_code}` | 공개(제한) | 방 화면에서(주소에 참가 코드) 관리자 코드 → 운영 키 |
 | `POST .../join {name, room}` | 공개 | 참가(접수 중만, 명단 이름만, 방 이름 검증) → 토큰 |
 | `POST .../participants {name, group|remove}` | 운영 | 그룹 이동·제외 |
 | `POST .../participants/add {names[]}` | 운영 | 명단에서 사전 등록(최대 100명/요청) |
@@ -176,7 +182,8 @@ flowchart TD
 | `POST .../brackets/<g>/rebuild {seed}` | 운영 | 그룹 대진 새로 생성(random|division). 대진표가 없는 그룹도 됨(대진표 밖 참가자 넣기) |
 | `POST .../brackets/<g>/move {name, match, slot}` | 운영 | 끌어 놓기 |
 | `POST .../brackets/<g>/swap {a, b}` | 운영 | 두 선수 교환(구 API, 유지) |
-| `POST .../start` | 운영 | 접수 마감 + 대진표 생성 |
+| `POST .../draft` | 운영 | 접수 중 → 편성 중: 대진표 만들기(참가 접수는 계속) |
+| `POST .../start` | 운영 | 편성 중 → 진행 중: 접수 마감, 고친 대진표 그대로 시작 (접수 중에서 부르면 대진표도 이때 만듦 — 화면에는 없음) |
 | `POST .../matches/<id>/report {winner, games?, token|admin_key}` | 참가자/운영 | 결과 보고(점수판·폰) |
 | `POST .../matches/<id>/confirm {winner?, games?}` | 운영 | 확정(본문 없으면 보고대로). 게임 점수가 있으면 `경기기록`에도 저장 |
 | `POST .../matches/<id>/reset` | 운영 | 되돌리기 |
@@ -211,6 +218,9 @@ flowchart TD
 22. (버그 수정) 진행 중 동시 추가로 대진표에서 사람이 빠지던 문제 → 운영진 동작도 로그에 덧붙이고 읽을 때 되살림. 같은 기기의 요청은 차례로.
 23. 대진표에 자리가 없는 참가자는 운영진에게 알리고 **'대진표에 넣기'**로 다시 짠다(예전 버전 데이터·시작 순간의 참가 대비).
 24. 폰에서 끌기 중 화면 가장자리 **자동 스크롤**(화면 밖 자리에도 놓을 수 있게).
+25. 시작 흐름 변경: 접수 화면의 **'대진표 만들기'** → 대진표 화면(편성 중)에서 고친 뒤 **'토너먼트 시작'**을 눌러야 참가 접수가 끝난다. 편성 중 새 참가자는 **빈 자리에 자동**(고친 자리 유지), 편성 중 대진표는 **참가자에게 숨김**(시작하면 보임). 편성 중 운영진 화면에는 대진표 아래 참가자 카드(그룹 이동·제외)와 추가 칸이 있고, 본인 폰으로 들어온 사람은 토스트로 알린다.
+26. **참가 QR**: 운영 화면 '참가 QR 코드' → 큰 QR(참가 링크 `/league/join?code=…`) + 코드. 찍으면 코드가 채워진 참가 화면이 열리고 방 이름이 보인다.
+27. **관리자 코드만으로 운영 화면 열기**(참가 코드 입력 없앰). 새 관리자 코드는 모든 방의 참가·관리자 코드와 겹치지 않게 발급, 예전 방끼리 겹치면 가장 최근 방.
 
 디자인 원칙(사용자 취향): 세로 막대·그라데이션·뱃지 같은 "AI틱한" 요소 대신 타이포·정렬로 위계, 중복 링크 금지, 사이트 톤(흰 카드·회색 선·빨강 강조, 다크 모드 `rubber`) 유지.
 
@@ -223,8 +233,11 @@ cd ~/.cache/claude-powerdrive-tests
 ./venv/bin/python fake_server.py &            # 가짜 구글 시트 + 앱, 포트 5002 (템플릿을 고치면 재시작)
 FAKE_LATENCY=0.25 PORT=5003 ./venv/bin/python fake_server.py &   # 시트 호출마다 0.25초 늦게 답하는 서버 (동시성 시험용)
 node check.js                                 # 기존 기능 회귀 29건 (새 서버에서 먼저 돌릴 것)
+# 스위트 여러 개를 이어 돌리면 서버의 쓰기 한도(10분 240회)가 쌓여 429가 난다 — 무거운 스위트마다 가짜 서버를 새로 띄운다
 ./venv/bin/python league-api-test.py          # API 흐름 94건
-node league-ui-test.js                        # 브라우저(퍼펫티어, 시스템 크롬) 54건: 운영진 2대 + 폰 4~5대
+node league-ui-test.js                        # 브라우저(퍼펫티어, 시스템 크롬) 62건: 운영진 2대 + 폰 4~5대 (접수 → 대진표 만들기 → 편성 중 → 시작 → 종료)
+./venv/bin/python draft-api-test.py           # 편성 중 흐름·자동 배치·관리자 코드 로그인 27건
+node qr-admin-ui.js                           # 참가 QR(jsQR로 실제 판독) · QR로 연 참가 화면 · 관리자 코드만으로 열기 9건
 ./venv/bin/python league-calls-test.py        # 요청당 시트 호출 수(새로 고침 1 · 참가 2 · 운영진 변경 3 이하)
 ./venv/bin/python retry-test.py               # 시트가 잠깐 503일 때 한 번 다시 시도, 같은 줄이 두 번 들어가도 한 번만 적용 7건
 BASE=http://127.0.0.1:5003 ./venv/bin/python league-race-test.py   # 동시 요청 16~17건(동시 추가·확정·이동·보고, 시작과 참가 경합)
