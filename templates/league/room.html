@@ -260,6 +260,7 @@
         const addHost = t.status === 'lobby' ? $('lobby-add-host') : $('bracket-add-host');
         if (addBox.parentNode !== addHost) addHost.appendChild(addBox);
         if (t.status === 'lobby') renderLobby(t); else { renderBracket(t); notifyNewReports(t); }
+        refreshAddList();
         window.lucide && lucide.createIcons();
     }
 
@@ -430,32 +431,58 @@
 
     // ---------- 참가자 추가 (운영진) ----------
     let editMode = false;
+    let refreshAddList = () => {};
     (function setupAddPicker() {
         const input = $('add-input'), list = $('add-list');
         if (!input || !ROSTER.length) return;
         const { matchName } = window.HangulSearch;
-        let options = [];
+        let options = [];            // 지금 목록에 그려진 부원 (data-add 순서)
+        const pending = new Set();   // 추가 요청을 보내고 응답을 기다리는 이름
+        const CHECK = '<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+        const SPINNER = '<svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="3" class="opacity-20"/><path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>';
+        const stateOf = (name, taken) => taken.has(name) ? 'added' : pending.has(name) ? 'pending' : 'free';
+        // 이미 들어온 부원도 목록에 남겨 오른쪽에 체크를 그린다. 누른 줄이 그 자리에서 체크로 바뀌어 추가된 것을 바로 알 수 있다.
         function open(query) {
             const taken = new Set((tournament ? tournament.participants : []).map((p) => p.name));
-            options = ROSTER.filter((m) => !taken.has(m.이름) && (!query || matchName(m.이름, query)));
+            options = ROSTER.filter((m) => !query || matchName(m.이름, query));
             list.innerHTML = options.length
-                ? options.map((m, i) => `<li role="option" data-add="${i}" class="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"><span class="font-semibold">${escapeHtml(m.이름)}</span><span class="text-xs font-medium text-zinc-400 dark:text-zinc-500">${escapeHtml(m.부수 || '미지정')}</span></li>`).join('')
-                : '<li class="px-3 py-2 text-sm text-zinc-400 dark:text-zinc-500">추가할 수 있는 부원이 없습니다</li>';
+                ? options.map((m, i) => {
+                    const state = stateOf(m.이름, taken);
+                    const icon = state === 'added' ? CHECK : state === 'pending' ? SPINNER : '';
+                    return `<li role="option" data-add="${i}" data-state="${state}" aria-selected="${state === 'added'}" ${state === 'free' ? '' : 'aria-disabled="true"'}
+                        class="flex items-center justify-between gap-3 px-3 py-2 text-sm ${state === 'free' ? 'cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800' : 'cursor-default'}">
+                        <span class="font-semibold ${state === 'added' ? 'text-zinc-400 dark:text-zinc-500' : ''}">${escapeHtml(m.이름)}</span>
+                        <span class="flex items-center gap-2 text-xs font-medium text-zinc-400 dark:text-zinc-500">${escapeHtml(m.부수 || '미지정')}<span class="inline-flex w-4 justify-center ${state === 'added' ? 'text-red-600 dark:text-red-400' : ''}">${icon}</span>${state === 'added' ? '<span class="sr-only">참가 중</span>' : ''}</span>
+                    </li>`;
+                }).join('')
+                : '<li class="px-3 py-2 text-sm text-zinc-400 dark:text-zinc-500">일치하는 부원이 없습니다</li>';
             list.hidden = false; input.setAttribute('aria-expanded', 'true');
         }
         const close = () => { list.hidden = true; input.setAttribute('aria-expanded', 'false'); };
+        refreshAddList = () => { if (!list.hidden) open(input.value.trim()); };
         input.addEventListener('focus', () => open(input.value.trim()));
         input.addEventListener('input', () => open(input.value.trim()));
         input.addEventListener('blur', close);
-        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); if (options.length === 1) add(0); } if (e.key === 'Escape') close(); });
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const taken = new Set((tournament ? tournament.participants : []).map((p) => p.name));
+                const free = options.map((m, i) => [m, i]).filter(([m]) => stateOf(m.이름, taken) === 'free');
+                if (free.length === 1) add(free[0][1]);
+            }
+            if (e.key === 'Escape') close();
+        });
         list.addEventListener('mousedown', (e) => e.preventDefault());
-        list.addEventListener('click', (e) => { const item = e.target.closest('[data-add]'); if (item) add(Number(item.dataset.add)); });
+        list.addEventListener('click', (e) => { const item = e.target.closest('[data-add]'); if (item && item.dataset.state === 'free') add(Number(item.dataset.add)); });
         async function add(i) {
             const member = options[i];
-            if (!member) return;
+            if (!member || pending.has(member.이름)) return;
+            const query = input.value.trim();
+            pending.add(member.이름); open(query);                       // 누른 줄에 바로 회전 표시
             const data = await act('/participants/add', { names: [member.이름] }, `${member.이름} 추가`);
-            input.value = '';
-            if (data) open('');   // 계속 추가할 수 있게 목록을 다시 연다
+            pending.delete(member.이름);
+            open(input.value.trim());                                   // 성공하면 그 줄이 체크로 바뀐다
+            if (data && document.activeElement === input) input.select();  // 다음 이름을 바로 덧쓸 수 있게 검색어를 선택해 둔다
         }
     })();
 
