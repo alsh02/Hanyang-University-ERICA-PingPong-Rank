@@ -542,9 +542,12 @@
             document.body.appendChild(d.ghost);
             d.row.classList.add('opacity-40');
             if (navigator.vibrate) navigator.vibrate(10);
+            document.documentElement.style.scrollBehavior = 'auto';   // 부드러운 스크롤이 켜져 있으면 저절로 스크롤이 끊겨 보인다
             move(x, y);
+            d.raf = requestAnimationFrame(autoScroll);
         }
         function move(x, y) {
+            d.lastX = x; d.lastY = y;
             d.ghost.style.left = `${x - d.offX}px`; d.ghost.style.top = `${y - d.offY}px`;
             const target = targetAt(x, y);
             if (target === d.target) return;
@@ -552,9 +555,26 @@
             d.target = target;
             if (d.target) d.target.classList.add(...HIGHLIGHT);
         }
+        // 끄는 동안은 손가락 스크롤을 막으므로, 화면 위·아래 가장자리로 끌면 저절로 스크롤해 화면 밖 자리에도 놓을 수 있게 한다.
+        // 가장자리에 가까울수록 빠르다. 옆으로는 1라운드 쪽(왼쪽)으로만 — 놓을 수 있는 자리는 1라운드뿐이다.
+        const EDGE = 72;
+        function autoScroll() {
+            if (!d || !d.active) return;
+            const speed = (dist) => Math.ceil(Math.min(EDGE, EDGE - dist) / 5);
+            const vh = window.innerHeight, left = rounds.getBoundingClientRect().left;
+            const dy = d.lastY < EDGE ? -speed(d.lastY) : d.lastY > vh - EDGE ? speed(vh - d.lastY) : 0;
+            const dx = d.lastX < left + EDGE && rounds.scrollLeft > 0 ? -speed(d.lastX - left) : 0;
+            const before = [window.scrollY, rounds.scrollLeft];
+            if (dy) window.scrollBy(0, dy);
+            if (dx) rounds.scrollLeft += dx;
+            if (before[0] !== window.scrollY || before[1] !== rounds.scrollLeft) move(d.lastX, d.lastY);   // 손가락 아래의 자리가 바뀌었다
+            d.raf = requestAnimationFrame(autoScroll);
+        }
         function end(commit) {
             clearTimeout(d.timer);
             if (d.active) {
+                cancelAnimationFrame(d.raf);
+                document.documentElement.style.scrollBehavior = '';
                 d.ghost.remove();
                 d.row.classList.remove('opacity-40');
                 if (d.target) d.target.classList.remove(...HIGHLIGHT);
@@ -568,7 +588,7 @@
             if (e.pointerType === 'mouse' && e.button !== 0) return;
             const rect = row.getBoundingClientRect();
             d = { row, name: row.dataset.drag, id: e.pointerId, x: e.clientX, y: e.clientY, offX: e.clientX - rect.left, offY: e.clientY - rect.top,
-                  touch: e.pointerType !== 'mouse', active: false, target: null, ghost: null, timer: null };
+                  touch: e.pointerType !== 'mouse', active: false, target: null, ghost: null, timer: null, raf: null, lastX: e.clientX, lastY: e.clientY };
             if (d.touch) d.timer = setTimeout(() => { if (d && !d.active) begin(d.x, d.y); }, 350);   // 꾹 누르기
         });
         document.addEventListener('pointermove', (e) => {
