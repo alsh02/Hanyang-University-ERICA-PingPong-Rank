@@ -105,6 +105,10 @@
     const { matchName } = window.HangulSearch;
     const $ = (id) => document.getElementById(id);
     const escapeHtml = (text) => text.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+    // 끝 글자 받침으로 조사를 고른다: '1부로' · '부수 미지정으로', '김도윤은' · '정지호는'. 으로/로는 ㄹ 받침도 '로'('서울로')
+    const lastJong = (word) => { const c = String(word).charCodeAt(String(word).length - 1); return c >= 0xAC00 && c <= 0xD7A3 ? (c - 0xAC00) % 28 : 0; };
+    const euro = (word) => ([0, 8].includes(lastJong(word)) ? '로' : '으로');
+    const eunNeun = (word) => (lastJong(word) ? '은' : '는');
     const panel = $('join-panel'), input = $('name-input'), list = $('name-list'), codeInput = $('code'), error = $('join-error');
     let room = '', chosen = null, options = [];   // room: 고른 방 이름 (보낼 때 함께 보내 다른 방의 코드를 걸러 낸다)
 
@@ -127,7 +131,8 @@
         $('join-step').textContent = which === 'name' ? '1/2 이름' : '2/2 참가 코드';
         if (which === 'name') { if (!chosen) input.focus(); }
         else {
-            $('code-for').textContent = `${chosen.이름} · ${chosen.부수 || '부수 미지정'}으로 참가합니다`;
+            const division = chosen.부수 || '부수 미지정';
+            $('code-for').textContent = `${chosen.이름} · ${division}${euro(division)} 참가합니다`;
             codeInput.focus();
         }
         sync();
@@ -190,7 +195,7 @@
             let { response, data } = await sendJoin(code, false);
             if (response.status === 409 && data.can_reconnect) {
                 hideBusy();
-                if (!confirm(`${chosen.이름}은(는) 이미 다른 기기에서 참가했습니다. 이 기기로 다시 연결할까요? 예전 기기는 연결이 끊깁니다.`)) throw new Error(data.error);
+                if (!confirm(`${chosen.이름}${eunNeun(chosen.이름)} 이미 다른 기기에서 참가했습니다. 이 기기로 다시 연결할까요? 예전 기기는 연결이 끊깁니다.`)) throw new Error(data.error);
                 hideBusy = Busy.show('다시 연결하는 중입니다');
                 ({ response, data } = await sendJoin(code, true));
             }
