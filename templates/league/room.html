@@ -156,7 +156,10 @@
 
     // 운영 키: 개설 직후 주소의 ?key= 로 받아 이 기기에 저장하고, 주소에서는 지운다
     const params = new URLSearchParams(location.search);
-    if (params.get('key')) { storage.set(`league_admin_${code}`, params.get('key')); history.replaceState(null, '', location.pathname); }
+    if (params.get('key')) storage.set(`league_admin_${code}`, params.get('key'));
+    // 점수판에서 돌아오면 그 경기의 그룹 탭과 예선/본선 탭을 연다 (?group=·&stage=). 읽은 뒤 주소에서는 지운다.
+    const backTo = { group: params.get('group'), stage: ['prelim', 'main'].includes(params.get('stage')) ? params.get('stage') : null };
+    if (params.get('key') || backTo.group) history.replaceState(null, '', location.pathname);
     let adminKey = isAdmin ? storage.get(`league_admin_${code}`) : null;
     const adminCode = storage.get(`league_admin_code_${code}`);
     const me = (() => { try { return JSON.parse(storage.get(`league_token_${code}`) || 'null'); } catch (e) { return null; } })();
@@ -173,7 +176,7 @@
     const remember = (name) => { if (!isViewer) storage.set('league_last', JSON.stringify({ code, url: location.pathname, name })); };
     remember(root.dataset.name);
 
-    let tournament = null, activeGroup = null, pendingAction = null;
+    let tournament = null, activeGroup = backTo.group, pendingAction = null;
 
     // ---------- 공통 ----------
     function showToast(text, duration = 2800) {
@@ -958,7 +961,7 @@
 
     // ---------- 참가자 추가 (운영진) ----------
     let editMode = false;
-    let stageView = null;   // 예선이 있는 그룹에서 고른 탭('prelim' · 'main'). null이면 진행 상황에 맞춘다.
+    let stageView = backTo.stage;   // 예선이 있는 그룹에서 고른 탭('prelim' · 'main'). null이면 진행 상황에 맞춘다.
     let refreshAddList = () => {};
     (function setupAddPicker() {
         const input = $('add-input'), list = $('add-list');

@@ -506,7 +506,10 @@
         let token = null;
         try { token = (JSON.parse(read(`league_token_${code}`) || 'null') || {}).token || null; } catch (e) {}
         const adminKey = read(`league_admin_${code}`);
-        return { code, match: params.get('match'), adminKey, token, backUrl: adminKey ? `/league/${code}/admin` : `/league/${code}` };
+        // 대진표로 돌아갈 때 이 경기의 그룹 탭(경기 id 앞부분)과 예선/본선 탭이 열리게 주소에 붙인다
+        const match = params.get('match');
+        const back = new URLSearchParams({ group: match.split('-')[0], stage: /^[^-]+-p/.test(match) ? 'prelim' : 'main' });
+        return { code, match, adminKey, token, backUrl: `${adminKey ? `/league/${code}/admin` : `/league/${code}`}?${back}` };
     })();
 
     async function loadLeagueMatch() {
