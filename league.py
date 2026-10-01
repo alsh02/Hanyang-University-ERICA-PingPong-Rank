@@ -5,6 +5,7 @@
 편성 중에는 운영진만 대진표를 보고 고치며, 참가 접수는 '토너먼트 시작'을 누를 때까지 열려 있다.
 경기가 끝나면 선수(또는 점수판)가 결과를 보고하고, 운영진이 확정하면 승자가 다음 대진으로 올라간다.
 모든 그룹의 우승자가 정해지면 리그전이 끝난다.
+개설할 때 예선을 고르면 그룹마다 3명씩 조를 짜 리그전(3판 2선)을 먼저 하고, 조 1·2위만 본선 토너먼트(5판 3선)에 오른다.
 
 상태는 '탁우회 토너먼트' 파일의 두 시트에 둔다.
 - '토너먼트로그': 참가·결과 보고·운영 기록을 한 줄씩 덧붙이기만 한다(append-only). 이것이 원본이다.
@@ -239,7 +240,10 @@ def new_code(existing):
 
 
 def match_best_of(fmt, players_in_round):
-    # 초반은 3판 2선, 정해 둔 라운드(남은 선수 수 기준)부터 5판 3선
+    # 예선이 있으면 본선은 모두 5판 3선이다(예선 경기는 3판 2선으로 따로 정한다).
+    # 없으면 초반은 3판 2선, 정해 둔 라운드(남은 선수 수 기준)부터 5판 3선
+    if fmt.get("prelims"):
+        return 5
     if fmt["best_of"] == 5 or not fmt.get("best_of_from"):
         return fmt["best_of"]
     return 5 if players_in_round <= fmt["best_of_from"] else 3
@@ -331,13 +335,17 @@ def compute_participants(state):
 def refresh_derived(state):
     # 저장하지 않고 매번 계산하는 값: 경기별 선수 보고, 대진표에 자리가 없는 참가자
     for bracket in state["brackets"].values():
-        for match in _all_matches(bracket):
+        prelim = bracket.get("prelim")
+        for match in _all_matches(bracket) + (prelim["matches"] if prelim else []):
             report = state["_reports"].get(match["id"])
             # 보고는 그 경기가 결과를 기다리고, 보고한 대진(두 선수)이 지금 대진과 같을 때만 보인다.
             # 대진을 다시 짜거나 앞 경기를 되돌려 선수가 바뀌면 예전 보고는 숨는다.
             usable = (report and match["status"] == "pending" and report.get("winner") in match["players"]
                       and report.get("players", match["players"]) == match["players"])
             match["report"] = {k: report.get(k) for k in ("winner", "games", "by", "at")} if usable else None
+        if prelim:
+            for pool in prelim["pools"]:
+                describe_pool(bracket, pool)
     state["unplaced"] = unplaced_players(state)
 
 
@@ -348,6 +356,8 @@ def unplaced_players(state):
     placed = {}
     for key, b in state["brackets"].items():
         names = {p for m in b["matches"] if m["round"] == 1 for p in m["players"] if p}
+        if b.get("prelim"):
+            names |= {n for pool in b["prelim"]["pools"] for n in pool["players"]}
         if not b["matches"] and b.get("champion"):
             names.add(b["champion"])   # 혼자인 그룹
         placed[key] = names
@@ -477,8 +487,7 @@ def build_bracket(group_key, names, seed_mode, divisions, fmt, rng=None):
     # 같은 사람이 연달아 부전승을 받지 않게 한다. (10명: 5경기 → 2경기+부전승 → 1경기+부전승 → 결승)
     names = list(names)
     if seed_mode == "division":
-        names.sort(key=lambda n: (_deps["division_number"](divisions.get(n, "")) is None,
-                                  _deps["division_number"](divisions.get(n, "")) or 0, n))
+        names = sort_by_division(names, divisions)
     else:
         (rng or random).shuffle(names)
 
@@ -501,6 +510,12 @@ def build_bracket(group_key, names, seed_mode, divisions, fmt, rng=None):
     else:
         first = [[names[i], names[i + 1] if i + 1 < n else None] for i in range(0, n, 2)]
     return build_from_first(group_key, first, fmt)
+
+
+def sort_by_division(names, divisions):
+    # 부수가 높은(숫자가 작은) 사람부터, 부수가 없는 사람은 뒤로
+    number = _deps["division_number"]
+    return sorted(names, key=lambda n: (number(divisions.get(n, "")) is None, number(divisions.get(n, "")) or 0, n))
 
 
 def build_from_first(group_key, first, fmt):
@@ -578,7 +593,8 @@ def reflow_bracket(bracket):
 
 
 def group_has_results(bracket):
-    return any(m["status"] == "confirmed" for m in bracket["matches"] + ([bracket["third"]] if bracket.get("third") else []))
+    prelim = bracket.get("prelim")
+    return any(m["status"] == "confirmed" for m in _all_matches(bracket) + (prelim["matches"] if prelim else []))
 
 
 def rebuild_group(state, key, seed=None, rng=None):
@@ -587,7 +603,7 @@ def rebuild_group(state, key, seed=None, rng=None):
     divisions = {p["name"]: p["division"] for p in state["participants"]}
     third_on = bool(state["brackets"].get(key, {}).get("third"))
     if names:
-        state["brackets"][key] = build_bracket(key, names, seed or state["seed"], divisions, state["format"], rng)
+        state["brackets"][key] = build_group(key, names, seed or state["seed"], divisions, state["format"], rng)
         _keep_third(state, key, third_on)
     else:
         state["brackets"].pop(key, None)
@@ -614,6 +630,9 @@ def place_players(state, key):
     bracket = state["brackets"].get(key)
     if not names:
         state["brackets"].pop(key, None)
+        return
+    if wants_prelim(state["format"], len(names)) or (bracket and bracket.get("prelim")):
+        place_in_pools(state, key, names, bracket)
         return
     before = round1_layout(bracket) if bracket else []
     wanted = set(names)
@@ -694,8 +713,13 @@ def _advance(bracket, by_id, match, winner, status="confirmed"):
     sync_third(bracket)
 
 
+def _entries(m):
+    # 1라운드 경기에 들어올 자리: 예선이 있는 본선은 'A:1'(A조 1위) 같은 자리표, 없으면 선수 이름
+    return [s for s in (m.get("seats") or m["players"]) if s]
+
+
 def _is_bye_node(m):
-    return bool(m.get("bye")) or (m["round"] == 1 and len([p for p in m["players"] if p]) < 2)
+    return bool(m.get("bye")) or (m["round"] == 1 and len(_entries(m)) < 2)
 
 
 def third_feeders(bracket):
@@ -767,7 +791,8 @@ def refresh_status(state):
 
 def find_match(state, match_id):
     for bracket in state.get("brackets", {}).values():
-        for match in bracket["matches"] + ([bracket["third"]] if bracket.get("third") else []):
+        prelim = bracket.get("prelim")
+        for match in _all_matches(bracket) + (prelim["matches"] if prelim else []):
             if match["id"] == match_id:
                 return bracket, match
     raise LeagueError("그 경기를 찾을 수 없습니다.", 404)
@@ -809,10 +834,14 @@ def confirm_match(state, match_id, winner, games=None):
     if parsed is not None and match["players"][winner_index] != winner:
         raise LeagueError("게임 점수와 승자가 맞지 않습니다.")
 
-    by_id = {m["id"]: m for m in bracket["matches"]}
     match["games"] = parsed
     match["report"] = None
-    _advance(bracket, by_id, match, winner)
+    if match.get("prelim"):
+        # 예선 경기: 조의 경기가 모두 끝나 순위가 정해지면 1·2위가 본선 자리에 들어간다
+        match["winner"], match["status"] = winner, "confirmed"
+        sync_pools(bracket)
+    else:
+        _advance(bracket, {m["id"]: m for m in bracket["matches"]}, match, winner)
     refresh_status(state)
     return match, parsed
 
@@ -821,6 +850,16 @@ def reset_match(state, match_id):
     bracket, match = find_match(state, match_id)
     if match["status"] != "confirmed":
         raise LeagueError("확정된 경기만 되돌릴 수 있습니다.")
+    if match.get("prelim"):
+        # 예선 경기를 되돌리면 그 조는 다시 진행 중이 되어 본선 자리에서 빠진다 — 그 자리의 본선 경기가 끝났으면 안 된다
+        pool = next(p for p in bracket["prelim"]["pools"] if p["label"] == match["pool"])
+        if any(_unseat_blocked(bracket, seat) for seat in pool_seats(pool)):
+            raise LeagueError("이 조에서 오른 선수의 본선 경기가 이미 끝나 되돌릴 수 없습니다. 본선 경기부터 되돌리세요.")
+        match.update({"winner": None, "games": None, "status": "pending"})
+        pool["order"] = None   # 결과가 바뀌면 운영진이 정한 동률 순서도 다시 정한다
+        sync_pools(bracket)
+        refresh_status(state)
+        return match
     by_id = {m["id"]: m for m in bracket["matches"]}
     third = bracket.get("third")
     if match.get("third"):
@@ -857,13 +896,405 @@ def _retract(bracket, by_id, match):
         nxt["status"] = "waiting"
 
 
+# ---------------------------------------------------------------------------
+# 예선: 그룹마다 3명씩 조를 짜 리그전(조 안의 모든 대진, 3판 2선)을 하고, 조 1·2위가 본선 토너먼트(5판 3선)에 오른다.
+# 3으로 나누고 남는 2명은 2명 조(한 경기로 1·2위만 정하고 둘 다 본선), 남는 1명은 경기 없이 본선 직행(그 조 1위로 친다).
+# 본선 1라운드는 'A:1'(A조 1위) 같은 자리표로 미리 짜 두고, 조 순위가 정해지면 그 자리에 이름을 넣는다.
+# 그래서 먼저 끝난 조끼리는 다른 조를 기다리지 않고 본선 경기를 시작할 수 있다.
+# ---------------------------------------------------------------------------
+POOL_SIZE = 3
+
+
+def wants_prelim(fmt, count):
+    # 예선을 고른 토너먼트라도 그룹 인원이 2명 이하면 예선 없이 바로 본선(결승)이다
+    return bool(fmt.get("prelims")) and count >= POOL_SIZE
+
+
+def pool_label(i):
+    return chr(65 + i) if i < 26 else str(i + 1)
+
+
+def seat_label(label, rank):
+    return f"{label}:{rank}"
+
+
+def pool_seats(pool):
+    # 본선에 오르는 자리: 2명 이상인 조는 1·2위, 혼자인 조(본선 직행)는 1위만
+    return [seat_label(pool["label"], 1)] + ([seat_label(pool["label"], 2)] if len(pool["players"]) >= 2 else [])
+
+
+def make_pools(names, seed_mode, divisions, rng=None):
+    # 부수 순이면 강한 사람부터 조마다 한 명씩 뱀 모양(A→C, C→A, A→C)으로 나눠 조끼리 고르게, 아니면 섞어서 3명씩 자른다.
+    # 3으로 나누고 남는 사람(가장 약한 시드 또는 섞인 순서의 끝)이 마지막 조(2명 조 또는 본선 직행 1명)가 된다.
+    names = sort_by_division(names, divisions) if seed_mode == "division" else list(names)
+    if seed_mode != "division":
+        (rng or random).shuffle(names)
+    count, rest = divmod(len(names), POOL_SIZE)
+    pools = [[] for _ in range(count)]
+    for i, name in enumerate(names[:count * POOL_SIZE]):
+        turn, pos = divmod(i, count)
+        if seed_mode == "division":
+            pools[pos if turn % 2 == 0 else count - 1 - pos].append(name)
+        else:
+            pools[i // POOL_SIZE].append(name)
+    if rest:
+        pools.append(names[count * POOL_SIZE:])
+    return [{"label": pool_label(i), "players": p, "order": None} for i, p in enumerate(pools)]
+
+
+def pool_matches(group_key, pool):
+    # 조 안의 모든 대진: 3명이면 3경기(1-3, 2-3, 1-2 — 상위 시드끼리는 마지막에), 2명이면 1경기, 혼자면 없음. 예선은 늘 3판 2선.
+    p = pool["players"]
+    pairs = [(p[0], p[2]), (p[1], p[2]), (p[0], p[1])] if len(p) == 3 else [(p[0], p[1])] if len(p) == 2 else []
+    return [{"id": f"{group_key}-p{pool['label']}-{i + 1}", "pool": pool["label"], "round": 0, "index": i, "players": list(pair),
+             "winner": None, "games": None, "status": "pending", "best_of": 3, "next": None, "slot": 0, "prelim": True}
+            for i, pair in enumerate(pairs)]
+
+
+def _ratio(won, lost):
+    return won / lost if lost else (float("inf") if won else 0.0)
+
+
+def pool_ranking(pool, matches):
+    # 탁구 규정대로 순위를 가린다: 승수 → 동률인 사람끼리의 승수 → 그 사람끼리의 게임 비율 → 점수 비율.
+    # 한 단계에서 일부만 갈리면 남은 동률자끼리 처음 단계부터 다시 본다. 끝까지 같거나 게임 점수 없이 승자만 넣은 경기가 있어
+    # 가릴 수 없으면 그 사람들은 한 묶음(동률)으로 남는다 — 운영진이 정한 순서(order)가 있으면 그 순서로 가른다.
+    # 돌려주는 값: (순위 묶음 목록, 가릴 수 없었던 까닭 'equal'·'no_games') — 조의 경기가 다 끝나지 않았으면 (None, None)
+    ms = [m for m in matches if m["pool"] == pool["label"]]
+    if any(m["status"] != "confirmed" for m in ms):
+        return None, None
+    reasons = []
+
+    def split(group, key):
+        values = {n: key(n) for n in group}
+        return [[n for n in group if values[n] == v] for v in sorted(set(values.values()), reverse=True)]
+
+    def resolve(group):
+        if len(group) == 1:
+            return [group]
+        among = [m for m in ms if m["players"][0] in group and m["players"][1] in group]
+
+        def total(n, part):   # part: 0 이긴 게임, 1 진 게임, 2 딴 점수, 3 잃은 점수
+            result = 0
+            for m in among:
+                if n not in m["players"]:
+                    continue
+                mine = 0 if m["players"][0] == n else 1
+                for g in m["games"]:
+                    own, other = g[mine], g[1 - mine]
+                    result += ((own > other), (own < other), own, other)[part]
+            return result
+
+        steps = [lambda n: sum(1 for m in among if m["winner"] == n)]
+        if all(m.get("games") for m in among):
+            steps += [lambda n: _ratio(total(n, 0), total(n, 1)), lambda n: _ratio(total(n, 2), total(n, 3))]
+        for step in steps:
+            tiers = split(group, step)
+            if len(tiers) > 1:
+                return [t for tier in tiers for t in resolve(tier)]
+        reasons.append("equal" if len(steps) == 3 else "no_games")
+        return [group]
+
+    tiers = resolve(list(pool["players"]))
+    order = pool.get("order") or []
+    if order and all(n in order for n in pool["players"]):
+        tiers = [[n] for tier in tiers for n in sorted(tier, key=order.index)]
+    return tiers, ("no_games" if "no_games" in reasons else reasons[0] if reasons else None)
+
+
+def pool_result(pool, matches):
+    # 조의 상태: playing(경기가 남음) · tie(다 끝났지만 동률이라 운영진이 순위를 정해야 함) · done(순위 확정)
+    tiers, reason = pool_ranking(pool, matches)
+    if tiers is None:
+        return {"state": "playing", "ranking": None, "tiers": None, "reason": None}
+    if any(len(t) > 1 for t in tiers):
+        return {"state": "tie", "ranking": None, "tiers": tiers, "reason": reason}
+    return {"state": "done", "ranking": [t[0] for t in tiers], "tiers": tiers, "reason": None}
+
+
+def pool_table(pool, matches):
+    # 조 순위표의 숫자: 승·패, 게임·점수 득실 (확정된 경기만)
+    rows = {n: {"name": n, "wins": 0, "losses": 0, "games_won": 0, "games_lost": 0, "points_won": 0, "points_lost": 0, "rank": None}
+            for n in pool["players"]}
+    for m in matches:
+        if m["pool"] != pool["label"] or m["status"] != "confirmed":
+            continue
+        for i, n in enumerate(m["players"]):
+            row = rows[n]
+            row["wins" if m["winner"] == n else "losses"] += 1
+            for g in m.get("games") or []:
+                own, other = g[i], g[1 - i]
+                row["games_won" if own > other else "games_lost"] += 1
+                row["points_won"] += own
+                row["points_lost"] += other
+    return list(rows.values())
+
+
+def describe_pool(bracket, pool):
+    # 화면에 쓰는 조 요약을 매번 다시 계산해 붙인다: 상태·순위·순위표·동률 묶음, 경기마다 되돌릴 수 있는지(locked)
+    matches = bracket["prelim"]["matches"]
+    result = pool_result(pool, matches)
+    rows = pool_table(pool, matches)
+    seat_index = {n: i for i, n in enumerate(pool["players"])}
+    if result["tiers"]:
+        rank_of, position = {}, 1
+        for tier in result["tiers"]:
+            for n in tier:
+                rank_of[n] = position
+            position += len(tier)
+        for row in rows:
+            row["rank"] = rank_of[row["name"]]
+        rows.sort(key=lambda r: (r["rank"], seat_index[r["name"]]))
+    else:
+        rows.sort(key=lambda r: (-r["wins"], r["losses"], seat_index[r["name"]]))
+    pool.update(standings=rows, state=result["state"], ranking=result["ranking"],
+                tied=[t for t in result["tiers"] if len(t) > 1] if result["state"] == "tie" else [],
+                tie_reason=result["reason"] if result["state"] == "tie" else None)
+    locked = any(_unseat_blocked(bracket, seat) for seat in pool_seats(pool))
+    for m in matches:
+        if m["pool"] == pool["label"]:
+            m["locked"] = locked
+
+
+def _match_slots(fillers, slots, preferred, allowed):
+    # 이분 매칭(증가 경로)으로 사람마다 서로 다른 자리를 준다. 먼저 바라는 조건(preferred)만으로 최대한 많이 놓고,
+    # 남은 사람은 허용 조건(allowed)으로 마저 놓는다(앞서 놓은 사람을 옮겨서라도). 다 놓을 수 없으면 None.
+    owner = {}
+
+    def place(f, seen, ok):
+        for s in slots:
+            if s in seen or not ok(fillers[f], s):
+                continue
+            seen.add(s)
+            if s not in owner or place(owner[s], seen, ok):
+                owner[s] = f
+                return True
+        return False
+
+    for f in range(len(fillers)):
+        place(f, set(), preferred)
+    placed = set(owner.values())
+    for f in range(len(fillers)):
+        if f not in placed and not place(f, set(), allowed):
+            return None
+    return {fillers[f]: s for s, f in owner.items()}
+
+
+def _round1_sides(first):
+    # 1라운드 배치대로 대진표를 만들어 보고, 1라운드 경기마다 결승의 어느 쪽(0·1)으로 올라가는지 돌려준다
+    dummy = [[f"{i}a", f"{i}b" if pair[1] is not None else None] for i, pair in enumerate(first)]
+    b = build_from_first("x", dummy, {"best_of": 3})
+    by_id = {m["id"]: m for m in b["matches"]}
+    sides = []
+    for m in sorted((m for m in b["matches"] if m["round"] == 1), key=lambda m: m["index"]):
+        node, side = m, 0
+        while node["next"]:
+            side = node["slot"]
+            node = by_id[node["next"]]
+        sides.append(side)
+    return sides
+
+
+def seat_layout(pools):
+    # 본선 1라운드 배치(자리표). 조 1위는 다른 조 2위와 첫 경기를 하고, 같은 조 1·2위는 결승의 반대쪽에 둔다.
+    # 1위는 조 순서(A가 가장 높은 시드)대로 표준 시드 위치에 퍼뜨리고, 인원이 홀수면 A조 1위가 1라운드 부전승(맨 끝 자리)이다.
+    # 조를 고쳐 1위가 경기 수보다 많아지면 남는 1위도 2위 자리에 들어간다.
+    winners = [seat_label(p["label"], 1) for p in pools]
+    runners = [seat_label(p["label"], 2) for p in pools if len(p["players"]) >= 2]
+    total = len(winners) + len(runners)
+    count = (total + 1) // 2
+    first = [[None, None] for _ in range(count)]
+    open_count = count - 1 if total % 2 else count
+    if total % 2:
+        first[-1][0] = winners.pop(0)
+    size = 1
+    while size < open_count:
+        size *= 2
+    order = [seed for seed in seed_order(size) if seed <= open_count]   # order[자리] = 그 자리의 시드
+    for i, seat in enumerate(winners[:open_count]):
+        first[order.index(i + 1)][0] = seat
+    fillers = winners[open_count:] + runners
+    sides = _round1_sides([[1, 1] for _ in range(open_count)] + ([[1, None]] if total % 2 else []))
+    pool_of = lambda seat: seat.rsplit(":", 1)[0]
+    home = {pool_of(pair[0]): sides[i] for i, pair in enumerate(first) if pair[0]}
+    slots = list(range(open_count))
+    other_pool = lambda seat, i: pool_of(first[i][0]) != pool_of(seat)
+    other_side = lambda seat, i: other_pool(seat, i) and home.get(pool_of(seat)) != sides[i]
+    # 경기 수가 홀수라 결승의 두 쪽 크기가 다르면 모든 조를 반대쪽에 둘 수는 없다 — 그래도 되도록 많이
+    placed = _match_slots(fillers, slots, other_side, other_pool) or dict(zip(fillers, slots))   # 조가 하나뿐이면 같은 조끼리(결승)
+    for seat, i in placed.items():
+        first[i][1] = seat
+    return first
+
+
+def build_main(group_key, pools, fmt):
+    # 자리표로 본선 대진표를 만든다. build_from_first는 자리표를 이름처럼 다뤄 부전승을 올려 두므로 자리표만 남기고 비운다.
+    bracket = build_from_first(group_key, seat_layout(pools), fmt)
+    for m in bracket["matches"]:
+        if m["round"] == 1:
+            m["seats"] = list(m["players"])
+        m.update({"players": [None, None], "winner": None, "games": None, "status": "waiting"})
+    bracket["champion"] = None
+    return bracket
+
+
+def prelim_bracket(group_key, pools, fmt):
+    bracket = build_main(group_key, pools, fmt)
+    bracket["prelim"] = {"pools": pools, "matches": [m for p in pools for m in pool_matches(group_key, p)]}
+    sync_pools(bracket)   # 본선 직행(혼자인 조)은 바로 자리에 들어간다
+    return bracket
+
+
+def build_group(group_key, names, seed_mode, divisions, fmt, rng=None):
+    # 그룹 하나의 대진: 예선이 있으면 조를 짜고 본선 자리표를 만들고, 없으면 바로 토너먼트
+    if wants_prelim(fmt, len(names)):
+        return prelim_bracket(group_key, make_pools(names, seed_mode, divisions, rng), fmt)
+    return build_bracket(group_key, names, seed_mode, divisions, fmt, rng)
+
+
+def _seat_match(bracket, seat):
+    for m in bracket["matches"]:
+        if m["round"] == 1 and seat in (m.get("seats") or []):
+            return m, m["seats"].index(seat)
+    return None, None
+
+
+def _unseat_blocked(bracket, seat):
+    # 그 자리의 사람을 빼면 안 되는 경우: 본선 첫 경기가 이미 끝났거나, 부전승으로 올라가 다음 실제 경기가 끝났다
+    m, slot = _seat_match(bracket, seat)
+    if m is None or not m["players"][slot]:
+        return False
+    if m["status"] == "confirmed":
+        return True
+    if m["status"] == "bye":
+        by_id = {x["id"]: x for x in bracket["matches"]}
+        real = by_id.get(m["next"])
+        while real is not None and real.get("bye"):
+            real = by_id.get(real["next"])
+        return real is not None and real["status"] == "confirmed"
+    return False
+
+
+def sync_pools(bracket):
+    # 조 순위와 본선 자리를 맞춘다: 순위가 정해진 조는 1·2위를 자리에 넣고, 아직(또는 다시) 안 정해진 조는 자리를 비운다.
+    # 비워야 하는 자리의 본선 경기가 이미 끝났으면 아무것도 바꾸지 않고 거절한다 (본선 경기부터 되돌려야 한다).
+    prelim = bracket.get("prelim")
+    if not prelim:
+        return
+    wanted = {}
+    for pool in prelim["pools"]:
+        ranking = pool_result(pool, prelim["matches"])["ranking"]
+        for rank, seat in enumerate(pool_seats(pool)):
+            wanted[seat] = ranking[rank] if ranking else None
+    changes = []
+    for seat, name in wanted.items():
+        m, slot = _seat_match(bracket, seat)
+        if m is not None and m["players"][slot] != name:
+            changes.append((seat, m, slot, name))
+    if any(m["players"][slot] and _unseat_blocked(bracket, seat) for seat, m, slot, _ in changes):
+        raise LeagueError("본선 경기가 이미 끝나 예선 순위를 바꿀 수 없습니다. 본선 경기부터 되돌리세요.")
+    by_id = {m["id"]: m for m in bracket["matches"]}
+    for seat, m, slot, name in changes:   # 먼저 바뀌는 자리를 모두 비우고
+        if m["players"][slot]:
+            if m["status"] == "bye":
+                _retract(bracket, by_id, m)
+            m["players"][slot] = None
+            m.update({"winner": None, "games": None, "status": "waiting"})
+    for seat, m, slot, name in changes:   # 그다음 채운다 (상대도 정해졌으면 경기 가능, 부전승 자리면 바로 다음 라운드로)
+        if not name:
+            continue
+        m["players"][slot] = name
+        expected, present = len(_entries(m)), [p for p in m["players"] if p]
+        if len(present) == expected == 2:
+            m["status"] = "pending"
+        elif len(present) == expected == 1:
+            _advance(bracket, by_id, m, name, status="bye")
+    sync_third(bracket)
+
+
+def place_in_pools(state, key, names, bracket):
+    # 편성 중(예선): 조와 참가자를 맞춘다. 떠난 사람은 조에서 빼고(빈 조는 없애고 이름표를 다시 붙인다), 새로 온 사람은
+    # 3명이 안 된 조 가운데 가장 많이 찬 조(2명 조 → 혼자인 조)에, 그런 조가 없으면 새 조(본선 직행)에 넣는다.
+    # 인원이 2명 이하가 되면 예선 없는 대진으로, 3명이 되면 예선 대진으로 새로 만든다. 상태가 같으면 어디서 해도 결과가 같다.
+    fmt = state["format"]
+    divisions = {p["name"]: p["division"] for p in state["participants"]}
+    third_on = bool(bracket and bracket.get("third"))
+    if not bracket or bool(bracket.get("prelim")) != wants_prelim(fmt, len(names)):
+        state["brackets"][key] = build_group(key, names, state["seed"], divisions, fmt, random.Random("|".join(sorted(names))))
+        _keep_third(state, key, third_on)
+        return
+    wanted = set(names)
+    before = [list(p["players"]) for p in bracket["prelim"]["pools"]]
+    pools = [p for p in ([n for n in pool if n in wanted] for pool in before) if p]
+    placed = {n for p in pools for n in p}
+    for name in names:
+        if name in placed:
+            continue
+        open_pools = [p for p in pools if len(p) < POOL_SIZE]
+        if open_pools:
+            max(open_pools, key=len).append(name)
+        else:
+            pools.append([name])
+    if pools == before:
+        return
+    state["brackets"][key] = prelim_bracket(key, [{"label": pool_label(i), "players": p, "order": None} for i, p in enumerate(pools)], fmt)
+    _keep_third(state, key, third_on)
+
+
+def move_in_pools(bracket, group_key, fmt, name, label, index):
+    # 예선 조 사이에서 선수를 옮긴다(결과가 없을 때만). 그 자리에 사람이 있으면 서로 바꾸고, 빈 자리면 옮긴다.
+    # 조는 3명까지이고, 옮겨서 빈 조가 생기면 거절한다. 바뀐 조로 예선 경기와 본선 자리표를 새로 만든다. 바뀐 게 없으면 None.
+    labels = [p["label"] for p in bracket["prelim"]["pools"]]
+    pools = [list(p["players"]) for p in bracket["prelim"]["pools"]]
+    if label not in labels or isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < POOL_SIZE:
+        raise LeagueError("옮길 조와 자리가 올바르지 않습니다.")
+    source = next(((i, j) for i, p in enumerate(pools) for j, n in enumerate(p) if n == name), None)
+    if source is None:
+        raise LeagueError("이 그룹 예선 조에 없는 선수입니다.")
+    target, (si, sj) = labels.index(label), source
+    if index < len(pools[target]):
+        if (si, sj) == (target, index):
+            return None
+        pools[target][index], pools[si][sj] = name, pools[target][index]
+    else:
+        if si == target:
+            return None
+        if len(pools[target]) >= POOL_SIZE:
+            raise LeagueError("그 조는 이미 3명입니다. 다른 선수와 자리를 바꿔 주세요.")
+        if len(pools[si]) == 1:
+            raise LeagueError("그 자리로 옮기면 빈 조가 생깁니다. 다른 선수와 자리를 바꿔 주세요.")
+        pools[si].pop(sj)
+        pools[target].append(name)
+    return prelim_bracket(group_key, [{"label": labels[i], "players": p, "order": None} for i, p in enumerate(pools)], fmt)
+
+
+def set_pool_order(state, group, label, order):
+    # 운영진: 규정으로 가려지지 않은 동률 조의 순위를 정한다 (조의 경기가 모두 끝난 뒤에만, 동률 묶음 안에서만 쓰인다)
+    bracket = state["brackets"].get(group)
+    if state["status"] != "running" or not bracket or not bracket.get("prelim"):
+        raise LeagueError("진행 중인 예선에서만 순위를 정할 수 있습니다.")
+    pool = next((p for p in bracket["prelim"]["pools"] if p["label"] == label), None)
+    if pool is None:
+        raise LeagueError("조가 올바르지 않습니다.")
+    if sorted(order) != sorted(pool["players"]):
+        raise LeagueError("조의 모든 선수를 순위대로 골라 주세요.")
+    previous, pool["order"] = pool.get("order"), None
+    state_now = pool_result(pool, bracket["prelim"]["matches"])["state"]
+    if state_now != "tie":
+        pool["order"] = previous
+        raise LeagueError("조의 경기가 모두 끝난 뒤에 순위를 정할 수 있습니다." if state_now == "playing" else "규정으로 순위가 정해진 조입니다.")
+    pool["order"] = list(order)
+    sync_pools(bracket)
+    refresh_status(state)
+
+
 def _build_all(state, rng):
     divisions = {p["name"]: p["division"] for p in state["participants"]}
     state["brackets"] = {}
     for g in state["groups"]:
         names = [p["name"] for p in state["participants"] if p["group"] == g["key"]]
         if names:
-            state["brackets"][g["key"]] = build_bracket(g["key"], names, state["seed"], divisions, state["format"], rng)
+            state["brackets"][g["key"]] = build_group(g["key"], names, state["seed"], divisions, state["format"], rng)
 
 
 def make_draft(state, rng=None):
@@ -893,6 +1324,8 @@ def apply_settings(state, best_of_from):
     # 5판 3선 전환 시점을 바꾸면 아직 안 끝난 경기의 판수만 다시 정한다
     if best_of_from not in BEST_OF_FROM_CHOICES:
         raise LeagueError("5판 3선 전환 시점이 올바르지 않습니다.")
+    if state["format"].get("prelims"):
+        raise LeagueError("예선이 있는 토너먼트는 예선 3판 2선, 본선 5판 3선으로 정해져 있습니다.")
     state["format"]["best_of_from"] = best_of_from if state["format"]["best_of"] == 3 else 0
     for bracket in state["brackets"].values():
         for m in _all_matches(bracket):
@@ -939,6 +1372,8 @@ def apply_op(state, op):
         if state["status"] not in ("draft", "running") or group not in state["brackets"]:
             raise LeagueError("대진표를 만든 뒤에 고칠 수 있습니다.")
         _editable_groups(state, {group})
+        if state["brackets"][group].get("prelim"):
+            raise LeagueError("예선이 있는 그룹의 본선 자리는 예선 순위로 정해집니다. 예선 조에서 옮겨 주세요.")
         if kind == "move":
             move_player(state["brackets"][group], op.get("name"), op.get("match"), op.get("slot"))
         else:
@@ -953,6 +1388,19 @@ def apply_op(state, op):
         confirm_match(state, op["match"], op.get("winner"), op.get("games"))
     elif kind == "reset":
         reset_match(state, op.get("match"))
+    elif kind == "pool_move":
+        group = op.get("group")
+        bracket = state["brackets"].get(group)
+        if state["status"] not in ("draft", "running") or not bracket or not bracket.get("prelim"):
+            raise LeagueError("예선 조를 만든 뒤에 고칠 수 있습니다.")
+        _editable_groups(state, {group})
+        moved = move_in_pools(bracket, group, state["format"], op.get("name"), op.get("pool"), op.get("index"))
+        if moved:
+            state["brackets"][group] = moved
+            _keep_third(state, group, bool(bracket.get("third")))
+        refresh_status(state)
+    elif kind == "pool_order":
+        set_pool_order(state, op.get("group"), op.get("pool"), op.get("order") or [])
     elif kind in ("group", "remove"):
         name = op.get("name")
         current = next((p for p in state["participants"] if p["name"] == name), None)
@@ -1120,6 +1568,10 @@ def api_create():
     if seed not in ("random", "division"):
         raise LeagueError("대진 배치 방식이 올바르지 않습니다.")
     groups = _parse_groups(data.get("groups"))
+    # 예선을 하면 예선은 3판 2선, 본선(예선 뒤의 경기)은 모두 5판 3선이라 전환 시점은 쓰지 않는다
+    prelims = bool(data.get("prelims"))
+    if prelims:
+        best_of_from = 0
 
     rows, _ = _read_all(force=True)
     # 참가 코드끼리, 관리자 코드끼리 겹치지 않게 한다 — 관리자 코드만으로 방을 찾아 운영 화면을 열기 때문이다
@@ -1129,7 +1581,7 @@ def api_create():
     state = {
         "code": code, "name": name, "status": "lobby", "created_at": kst_now(), "updated_at": kst_now(),
         "admin_key": secrets.token_urlsafe(18), "admin_code": admin_code,
-        "format": {"target": target, "best_of": best_of, "best_of_from": best_of_from},
+        "format": {"target": target, "best_of": best_of, "best_of_from": best_of_from, "prelims": prelims},
         "groups": groups, "seed": seed, "group_overrides": {}, "removed": [], "brackets": {}, "applied": [],
     }
     save_state(state)
@@ -1381,6 +1833,28 @@ def api_move(code, group):
     if not name or not match_id or slot not in (0, 1):
         raise LeagueError("옮길 선수와 자리를 알려 주세요.")
     return _run(state, new_op("move", group=group, name=name, match=match_id, slot=slot))
+
+
+@league_bp.route("/api/league/<code>/brackets/<group>/pool-move", methods=["POST"])
+def api_pool_move(code, group):
+    # 운영진: 결과가 없는 그룹에서 선수를 다른 예선 조(의 자리)로 옮긴다 (자리에 사람이 있으면 서로 바꾼다)
+    state = load_state(code, force=True)
+    _require_admin(state)
+    data = request.get_json(silent=True) or {}
+    name, pool, index = str(data.get("name", "")).strip(), str(data.get("pool", "")).strip(), data.get("index")
+    if not name or not pool or isinstance(index, bool) or not isinstance(index, int):
+        raise LeagueError("옮길 선수와 자리를 알려 주세요.")
+    return _run(state, new_op("pool_move", group=group, name=name, pool=pool, index=index))
+
+
+@league_bp.route("/api/league/<code>/brackets/<group>/pool-order", methods=["POST"])
+def api_pool_order(code, group):
+    # 운영진: 동률이라 규정으로 가려지지 않은 예선 조의 순위를 정한다
+    state = load_state(code, force=True)
+    _require_admin(state)
+    data = request.get_json(silent=True) or {}
+    order = [str(n).strip() for n in (data.get("order") or [])][:POOL_SIZE]
+    return _run(state, new_op("pool_order", group=group, pool=str(data.get("pool", "")).strip(), order=order))
 
 
 @league_bp.route("/api/league/<code>/draft", methods=["POST"])

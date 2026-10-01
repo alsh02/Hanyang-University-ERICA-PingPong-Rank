@@ -77,6 +77,8 @@
         <div id="pending-reports" hidden class="mx-auto mb-4 max-w-3xl rounded-2xl border-2 border-amber-300 bg-amber-50 p-4 dark:border-amber-500/40 dark:bg-amber-500/10"></div>
         <div id="group-tabs" class="mb-4 flex flex-wrap justify-center gap-2"></div>
         <div id="admin-tools" hidden class="mx-auto mb-4 flex max-w-3xl flex-wrap items-center justify-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs dark:border-zinc-800 dark:bg-zinc-900"></div>
+        <!-- 예선이 있는 그룹: 예선(조별 리그)과 본선(토너먼트)을 바꿔 본다 -->
+        <div id="stage-tabs" hidden class="mb-4 flex justify-center"></div>
         <div id="rounds" class="-mx-4 overflow-x-auto px-4 pb-3 sm:mx-0 sm:px-0"></div>
         <!-- 편성 중 운영진: 접수 화면의 그룹별 참가자 카드가 여기로 옮겨진다 (그룹 이동·제외하면 대진표도 바로 바뀐다) -->
         <div id="bracket-people-host" hidden class="mx-auto mt-8 max-w-4xl">
@@ -116,6 +118,21 @@
                 <button type="submit" id="result-submit" class="h-11 rounded-xl bg-red-600 text-sm font-bold text-white transition-colors hover:bg-red-700 disabled:bg-zinc-300 dark:bg-rubber dark:hover:bg-red-500 dark:disabled:bg-zinc-800">보내기</button>
             </div>
         </form>
+    </div>
+
+    <!-- 예선 동률: 규정으로 가려지지 않으면 운영진이 순위를 정한다 -->
+    <div id="order-panel" hidden class="fixed inset-0 z-50 flex items-end justify-center bg-zinc-900/50 p-4 sm:items-center">
+        <div class="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-5 shadow-xl dark:border-zinc-800 dark:bg-zinc-900">
+            <p id="order-title" class="text-xs font-semibold text-zinc-500 dark:text-zinc-400"></p>
+            <p class="text-base font-bold">순위를 정하세요</p>
+            <p class="mt-1 break-keep text-sm text-zinc-500 dark:text-zinc-400">동률인 선수를 높은 순위부터 차례로 누르세요.</p>
+            <ol id="order-picked" class="mt-3 space-y-1 text-sm"></ol>
+            <div id="order-choices" class="mt-3 grid grid-cols-2 gap-2"></div>
+            <div class="mt-4 grid grid-cols-2 gap-2">
+                <button type="button" id="order-cancel" class="h-11 rounded-xl border border-zinc-200 text-sm font-semibold text-zinc-700 dark:border-zinc-700 dark:text-zinc-300">취소</button>
+                <button type="button" id="order-submit" disabled class="h-11 rounded-xl bg-red-600 text-sm font-bold text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:bg-rubber dark:hover:bg-red-500 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500">확정</button>
+            </div>
+        </div>
     </div>
 
     <div id="toast" hidden class="pointer-events-none fixed left-1/2 top-20 z-[60] -translate-x-1/2 rounded-xl bg-zinc-900/90 px-4 py-2 text-sm font-semibold text-white shadow-lg dark:bg-zinc-100/90 dark:text-zinc-900"></div>
@@ -231,6 +248,10 @@
     function showNotice(text) { const n = $('notice'); n.textContent = text; n.hidden = !text; }
 
     const groupName = (key) => (tournament.groups.find((g) => g.key === key) || {}).name || key;
+    // 그룹의 모든 경기(본선 · 3·4위전 · 예선)와 예선 자리표 'A:1' → 'A조 1위'
+    const allMatches = (b) => b.matches.concat(b.third ? [b.third] : [], b.prelim ? b.prelim.matches : []);
+    const seatText = (seat) => { const [pool, rank] = seat.split(':'); return `${pool}조 ${rank}위`; };
+    const poolOf = (b, name) => (b && b.prelim ? b.prelim.pools.find((p) => p.players.includes(name)) : null);
     const groupOf = (name) => (tournament.participants.find((p) => p.name === name) || {}).group;
     const divisionOf = (name) => (tournament.participants.find((p) => p.name === name) || {}).division || '';
     const button = (label, attrs, style = 'ghost') => {
@@ -247,9 +268,9 @@
     const seenReports = new Set();
     let firstRender = true, audioCtx = null;
     let soundOn = storage.get('league_sound') !== 'off';
-    const stageOf = (groupKey, m) => m.third ? '3·4위전' : tournament.brackets[groupKey].labels[m.round];
+    const stageOf = (groupKey, m) => m.prelim ? `예선 ${m.pool}조` : m.third ? '3·4위전' : tournament.brackets[groupKey].labels[m.round];
     const pendingReports = (t) => Object.entries(t.brackets || {}).flatMap(([k, b]) =>
-        b.matches.concat(b.third ? [b.third] : []).filter((m) => m.status === 'pending' && m.report).map((m) => ({ group: k, m })));
+        allMatches(b).filter((m) => m.status === 'pending' && m.report).map((m) => ({ group: k, m })));
     const reportKey = (m) => `${m.id}|${m.report.at}|${m.report.winner}|${JSON.stringify(m.report.games)}`;
 
     function beep() {
@@ -305,15 +326,20 @@
     }
 
     // ---------- 그리기 ----------
+    let shownStatus = null;
     function render() {
         if (dragging) return;   // 끌어 놓는 중에는 카드가 사라지지 않게 잠시 미룬다
         const t = tournament;
+        // 편성 중 → 진행 중처럼 단계가 바뀌면 예선/본선 탭은 다시 진행 상황에 맞춘다 (시작하면 예선부터)
+        if (t.status !== shownStatus) { if (shownStatus) stageView = null; shownStatus = t.status; }
         baseTitle = `${t.name} · POWERDRIVE HANYANG`;
         document.title = baseTitle;
         $('room-name').textContent = t.name;
         if (t.code && $('room-code')) $('room-code').textContent = t.code;
         const fromLabel = { 2: '결승', 4: '준결승', 8: '8강', 16: '16강', 32: '32강' }[t.format.best_of_from];
-        $('room-format').textContent = `${t.format.target}점 · 3판 2선${fromLabel ? ` · ${fromLabel}부터 5판 3선` : ''} · ${t.seed === 'division' ? '부수 순 배치' : '무작위 배치'}`;
+        $('room-format').textContent = t.format.prelims
+            ? `${t.format.target}점 · 예선 3판 2선 · 본선 5판 3선 · ${t.seed === 'division' ? '부수 순 조 편성' : '무작위 조 편성'}`
+            : `${t.format.target}점 · 3판 2선${fromLabel ? ` · ${fromLabel}부터 5판 3선` : ''} · ${t.seed === 'division' ? '부수 순 배치' : '무작위 배치'}`;
         const pill = $('status-pill');
         pill.textContent = t.status_label;
         pill.className = 'mb-3 rounded-full border px-3 py-1 text-xs font-semibold ' + ({
@@ -408,7 +434,7 @@
             const fresh = t.status === 'draft' ? t.participants.filter((p) => !knownNames.has(p.name) && !p.added_by_admin) : [];
             const moved = t.participants.filter((p) => p.reconnected_at && knownReconnects[p.name] !== p.reconnected_at);
             if (moved.length) showToast(`${moved[0].name}${iGa(moved[0].name)}${moved.length > 1 ? ` 외 ${moved.length - 1}명이` : ''} 다른 기기로 다시 연결했습니다.`, 6000);
-            else if (fresh.length) showToast(`${fresh[0].name}${fresh.length > 1 ? ` 외 ${fresh.length - 1}명` : ''} 참가 · ${groupName(fresh[0].group)} 대진표 빈 자리에 들어갔습니다.`, 5000);
+            else if (fresh.length) showToast(`${fresh[0].name}${fresh.length > 1 ? ` 외 ${fresh.length - 1}명` : ''} 참가 · ${groupName(fresh[0].group)} ${t.format.prelims ? '예선 조에' : '대진표 빈 자리에'} 들어갔습니다.`, 5000);
         }
         knownNames = names;
         knownReconnects = reconnects;
@@ -432,7 +458,7 @@
         if (drafting && canAdmin) {
             $('draft-actions').innerHTML = `<p class="text-sm text-zinc-500 dark:text-zinc-400">참가 <strong class="text-zinc-900 dark:text-zinc-100">${t.participants.length}</strong>명 · 대진표를 확인하고 고친 뒤 시작하세요.</p>
                 <button type="button" id="start-button" class="${BIG_BUTTON}">토너먼트 시작</button>
-                <p class="break-keep text-xs text-zinc-400 dark:text-zinc-500">시작하면 참가 접수가 끝나고 선수 폰에 대진표가 보입니다. 그 전에 새로 들어온 사람은 그룹의 빈 자리나 맨 끝에 들어갑니다.</p>`;
+                <p class="break-keep text-xs text-zinc-400 dark:text-zinc-500">시작하면 참가 접수가 끝나고 선수 폰에 대진표가 보입니다. 그 전에 새로 들어온 사람은 ${t.format.prelims ? '3명이 안 된 조나 새 조' : '그룹의 빈 자리나 맨 끝'}에 들어갑니다.</p>`;
         }
 
         // 우승자 요약 (끝난 그룹부터). 편성 중에는 혼자인 그룹도 아직 우승이 아니다.
@@ -446,7 +472,8 @@
 
         const b = t.brackets[activeGroup];
         $('admin-tools').hidden = !canAdmin;
-        const locked = b && b.matches.concat(b.third ? [b.third] : []).some((m) => m.status === 'confirmed');
+        const locked = b && allMatches(b).some((m) => m.status === 'confirmed');
+        const prelim = b && b.prelim;
         if (locked) editMode = false;
         if (canAdmin) {
             const from = t.format.best_of_from || 0;
@@ -460,14 +487,31 @@
                     ${locked ? '<span class="basis-full break-keep text-center text-zinc-400">확정된 결과가 있어 지금은 넣을 수 없습니다. 결과를 되돌리면 넣을 수 있습니다.</span>' : `<span class="basis-full flex justify-center">${button('대진표에 넣기', 'data-place', 'primary')}</span>`}` : ''}
                 ${elsewhereLine}
                 <span class="font-semibold text-zinc-500 dark:text-zinc-400">${escapeHtml(groupName(activeGroup))} 운영</span>
-                ${b && b.rounds >= 1 ? (locked ? '<span class="text-zinc-400">결과가 확정되어 대진은 고정</span>'
-                    : `${button(editMode ? '대진 수정 끝' : '대진 수정', 'data-edit', editMode ? 'primary' : 'ghost')}${button('무작위 재배치', 'data-rebuild="random"')}`) : ''}
+                ${b && b.rounds >= 1 ? (locked ? `<span class="text-zinc-400">결과가 확정되어 ${prelim ? '조와 대진' : '대진'}은 고정</span>`
+                    : `${button(editMode ? (prelim ? '조 수정 끝' : '대진 수정 끝') : (prelim ? '예선 조 수정' : '대진 수정'), 'data-edit', editMode ? 'primary' : 'ghost')}${button('무작위 재배치', 'data-rebuild="random"')}`) : ''}
                 ${b && b.rounds >= 2 && b.third_possible !== false ? button(b.third ? '3·4위전 취소' : '3·4위전 진행', `data-third="${b.third ? 'off' : 'on'}"`, b.third ? 'ghost' : 'primary') : `<span class="text-zinc-400">3·4위전 없음(${b && b.rounds >= 2 ? '결승 진출자 한쪽이 경기 없이 올라옴' : '준결승 없음'})</span>`}
-                <label class="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-300">5판 3선 전환
+                ${t.format.prelims ? '<span class="text-zinc-500 dark:text-zinc-400">예선 3판 2선 · 본선 5판 3선</span>' : `<label class="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-300">5판 3선 전환
                     <select id="best-of-from" class="select-chevron select-chevron-sm h-8 rounded-lg border border-zinc-200 bg-white pl-2.5 pr-8 text-xs font-semibold text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
                         ${[[0, '전환 없음'], [2, '결승부터'], [4, '준결승부터'], [8, '8강부터'], [16, '16강부터']].map(([v, l]) => `<option value="${v}" ${v === from ? 'selected' : ''}>${l}</option>`).join('')}
-                    </select></label>
-                ${editMode ? '<span class="basis-full text-center text-zinc-500 dark:text-zinc-400">이름을 끌어 다른 자리에 놓으면 자리가 바뀝니다 · 폰에서는 꾹 누른 뒤 끌기 · 빈 자리는 부전승</span>' : ''}`;
+                    </select></label>`}
+                ${editMode ? `<span class="basis-full text-center text-zinc-500 dark:text-zinc-400">${prelim
+                    ? '이름을 끌어 다른 조의 자리에 놓으면 서로 바뀝니다 · 빈 자리에 놓으면 그 조로 옮겨집니다 · 폰에서는 꾹 누른 뒤 끌기'
+                    : '이름을 끌어 다른 자리에 놓으면 자리가 바뀝니다 · 폰에서는 꾹 누른 뒤 끌기 · 빈 자리는 부전승'}</span>` : ''}`;
+        }
+        // 예선이 있는 그룹: 예선(조별 순위표와 경기)과 본선(토너먼트)을 탭으로 바꿔 본다.
+        // 처음에는 진행 상황에 맞춰 — 예선이 모두 끝났으면 본선, 아니면 예선. 조를 고치는 중에는 예선.
+        $('stage-tabs').hidden = !prelim;
+        if (prelim) {
+            const finishedPools = prelim.pools.filter((p) => p.state === 'done').length;
+            if (editMode) stageView = 'prelim';
+            const view = stageView || (finishedPools === prelim.pools.length && !drafting ? 'main' : 'prelim');
+            const tab = (key, label, sub) => `<button type="button" data-stage="${key}" aria-current="${view === key}"
+                class="flex h-8 items-center gap-1.5 rounded-lg px-4 text-sm font-semibold text-zinc-500 transition-colors hover:text-zinc-900 aria-[current=true]:bg-zinc-900 aria-[current=true]:text-white dark:text-zinc-400 dark:hover:text-zinc-100 dark:aria-[current=true]:bg-zinc-100 dark:aria-[current=true]:text-zinc-900">
+                ${label}<span class="text-xs font-medium opacity-70">${sub}</span></button>`;
+            $('stage-tabs').innerHTML = `<div class="inline-flex gap-1 rounded-xl border border-zinc-200 bg-white p-1 dark:border-zinc-800 dark:bg-zinc-900">
+                ${tab('prelim', '예선', drafting ? `${prelim.pools.length}조` : `${finishedPools}/${prelim.pools.length}조 끝`)}${tab('main', '본선', `${b.size}명`)}</div>`;
+            $('rounds').innerHTML = view === 'prelim' ? renderPools(b) : renderTree(b);
+            return;
         }
         if (!b || b.rounds === 0) {
             $('rounds').innerHTML = `<div class="w-full rounded-2xl border border-dashed border-zinc-300 py-10 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
@@ -482,21 +526,45 @@
     // 운영진 화면은 운영 도구가 먼저라, 운영진 기기가 참가자이기도 할 때 내 경기 차례만 띄운다.
     function myStanding(t, name) {
         for (const [key, b] of Object.entries(t.brackets || {})) {
-            const games = b.matches.concat(b.third ? [b.third] : []).filter((m) => !m.bye && m.status !== 'bye' && m.players.includes(name));
-            if (!games.length && b.champion !== name) continue;
-            const stage = (m) => m.third ? '3·4위전' : b.labels[m.round];
-            if (b.champion === name) return { key, text: '우승', strong: true, note: b.matches.length ? '' : '그룹에 혼자라 자동으로 우승했습니다' };
-            if (b.third_winner === name) return { key, text: '3위', strong: true };
-            const match = games.find((m) => m.status === 'pending');
-            if (match) return { key, match, stage: stage(match) };
-            const next = games.find((m) => m.status === 'waiting');
-            if (next) return { key, text: `다음 경기 · ${stage(next)}`, note: '상대가 정해지면 여기에 나옵니다' };
-            const lost = games.filter((m) => m.status === 'confirmed' && m.winner !== name);
-            const last = lost.find((m) => m.third) || lost[lost.length - 1];
-            if (last) return { key, text: last.third ? '4위' : last.round === b.rounds ? '준우승' : `${stage(last)}에서 탈락` };
-            return { key, text: '대진표에서 내 경기를 확인하세요' };
+            // 예선: 조 경기가 남았으면 내 다음 예선 경기, 3위 이하면 탈락, 1·2위(또는 본선 직행)면 본선 상황
+            const pool = poolOf(b, name);
+            if (pool) {
+                const tag = `예선 ${pool.label}조`;
+                if (pool.state !== 'done') {
+                    const open = b.prelim.matches.filter((m) => m.pool === pool.label && m.status === 'pending' && m.players.includes(name));
+                    if (open.length) return { key, match: open[0], stage: tag, note: open.length > 1 ? `예선 남은 경기 ${open.length}` : '내 마지막 예선 경기' };
+                    if (pool.state === 'tie') return { key, text: `${tag} 경기 끝`, note: '동률이라 운영진이 순위를 정하고 있습니다' };
+                    return { key, text: `${tag} · 내 경기 끝`, note: '조의 남은 경기가 끝나면 순위가 정해집니다' };
+                }
+                const rank = pool.ranking.indexOf(name) + 1;
+                if (rank > 2) return { key, text: `${tag} ${rank}위로 탈락` };
+                const up = pool.players.length === 1 ? `${tag} · 본선 직행` : `${tag} ${rank}위로 본선 진출`;
+                const main = bracketStanding(key, b, name);
+                if (!main) return { key, text: up };
+                if (main.match) return { ...main, note: up };
+                if (main.strong) return main;
+                return { key, text: up, note: [main.text, main.note].filter(Boolean).join(' · ') };
+            }
+            const standing = bracketStanding(key, b, name);
+            if (standing) return standing;
         }
         return null;
+    }
+    // 예선 없는 대진(또는 예선을 통과한 뒤의 본선)에서 내 상황
+    function bracketStanding(key, b, name) {
+        const games = b.matches.concat(b.third ? [b.third] : []).filter((m) => !m.bye && m.status !== 'bye' && m.players.includes(name));
+        if (!games.length && b.champion !== name) return null;
+        const stage = (m) => m.third ? '3·4위전' : b.labels[m.round];
+        if (b.champion === name) return { key, text: '우승', strong: true, note: b.matches.length ? '' : '그룹에 혼자라 자동으로 우승했습니다' };
+        if (b.third_winner === name) return { key, text: '3위', strong: true };
+        const match = games.find((m) => m.status === 'pending');
+        if (match) return { key, match, stage: stage(match) };
+        const next = games.find((m) => m.status === 'waiting');
+        if (next) return { key, text: `다음 경기 · ${stage(next)}`, note: '상대가 정해지면 여기에 나옵니다' };
+        const lost = games.filter((m) => m.status === 'confirmed' && m.winner !== name);
+        const last = lost.find((m) => m.third) || lost[lost.length - 1];
+        if (last) return { key, text: last.third ? '4위' : last.round === b.rounds ? '준우승' : `${stage(last)}에서 탈락` };
+        return { key, text: '대진표에서 내 경기를 확인하세요' };
     }
 
     function renderMe(t) {
@@ -529,13 +597,14 @@
         }
         const stale = !isAdmin && myTag !== null && p.tag !== myTag;   // 같은 이름이 다른 기기로 다시 연결했다
         const count = t.participants.filter((x) => x.group === p.group).length;
+        const myPool = !open ? poolOf((t.brackets || {})[p.group], p.name) : null;
         const head = `<div class="flex items-start justify-between gap-3">
                 <div class="min-w-0">${label}
                     <p class="mt-1 flex flex-wrap items-baseline gap-x-2"><span class="text-2xl font-extrabold tracking-tight [overflow-wrap:anywhere]">${escapeHtml(p.name)}</span><span class="text-sm font-medium text-zinc-400 dark:text-zinc-500">${escapeHtml(p.division || '부수 미지정')}</span></p>
                 </div>
                 <div class="flex-shrink-0 text-right">
                     <p class="text-lg font-extrabold text-red-600 dark:text-red-400">${escapeHtml(groupName(p.group))}</p>
-                    <p class="text-xs text-zinc-400 dark:text-zinc-500">${count}명</p>
+                    <p class="text-xs text-zinc-400 dark:text-zinc-500">${myPool ? `예선 ${escapeHtml(myPool.label)}조` : `${count}명`}</p>
                 </div>
             </div>`;
         let body;
@@ -550,6 +619,7 @@
             const reported = m.report && m.report.by === me.name;
             body = `<p class="text-xs font-semibold text-red-600 dark:text-red-400">경기 가능 · ${escapeHtml(standing.stage)} · ${m.best_of}판 ${Math.floor(m.best_of / 2) + 1}선</p>
                 <p class="mt-1 text-lg font-bold">${m.players.map((n) => `<span class="${n === me.name ? 'text-red-600 dark:text-red-400' : ''}">${escapeHtml(n)}</span> <span class="text-xs font-medium text-zinc-400">${escapeHtml(divisionOf(n))}</span>`).join(' <span class="mx-1 text-sm font-medium text-zinc-400">vs</span> ')}</p>
+                ${standing.note ? `<p class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">${escapeHtml(standing.note)}</p>` : ''}
                 ${reported ? `<p class="mt-2 text-sm text-zinc-500 dark:text-zinc-400">결과를 보냈습니다 (승자 ${escapeHtml(m.report.winner)}). 운영진 확인을 기다리는 중입니다.</p>` : ''}
                 <!-- 두 버튼은 같은 크기로 카드 폭을 반씩 (주 동작인 점수판만 채움) -->
                 <div class="mt-3 grid grid-cols-2 gap-2">
@@ -579,7 +649,9 @@
         const rounds = [];
         for (let r = 1; r <= b.rounds; r++) rounds.push(b.matches.filter((m) => m.round === r).sort((x, y) => x.index - y.index));
         const leaves = {}, shown = {}, center = {};
-        rounds[0].forEach((m) => { const n = m.players.filter(Boolean).length; shown[m.id] = edit || n === 2; leaves[m.id] = edit ? 2 : Math.max(n, 1); });
+        // 1라운드 인원은 선수 이름(예선이 있으면 'A조 1위' 같은 자리표)으로 센다
+        const entries = (m) => (m.seats || m.players).filter(Boolean).length;
+        rounds[0].forEach((m) => { const n = entries(m); shown[m.id] = edit || n === 2; leaves[m.id] = edit ? 2 : Math.max(n, 1); });
         // 상위 라운드의 부전승 노드(bye)는 카드를 그리지 않고, 그 선수를 다음 카드에 바로 보여 준다
         for (let r = 1; r < b.rounds; r++) rounds[r].forEach((m) => { shown[m.id] = !m.bye; leaves[m.id] = rounds[r - 1].filter((c) => c.next === m.id).reduce((sum, c) => sum + leaves[c.id], 0); });
         let y = 0;
@@ -597,7 +669,7 @@
 
         const headers = rounds.map((list, i) => {
             const r = i + 1;
-            const byes = r === 1 ? list.filter((m) => m.players.filter(Boolean).length === 1).length : list.filter((m) => m.bye).length;
+            const byes = r === 1 ? list.filter((m) => entries(m) === 1).length : list.filter((m) => m.bye).length;
             const sub = r === 1 && edit ? '빈 자리는 부전승' : byes ? `부전승 ${byes}명` : '';
             return `<div class="flex-shrink-0 text-center" style="width:${BK.cardW}px;margin-right:${r < b.rounds ? BK.gap : 0}px">
                 <p class="text-xs font-bold text-zinc-500 dark:text-zinc-400">${escapeHtml(b.labels[r])}</p>
@@ -639,7 +711,7 @@
             const wins = m.games ? m.games.filter(([a, c]) => (i === 0 ? a > c : c > a)).length : null;
             return `<div class="flex h-8 items-center justify-between gap-2 px-2.5 ${i ? 'border-t border-zinc-100 dark:border-zinc-800' : ''}">
                 <span class="flex min-w-0 items-baseline gap-1.5">
-                    <span data-name class="truncate text-sm ${isWinner ? 'font-extrabold text-red-600 dark:text-red-400' : name ? 'font-semibold' : 'font-medium text-zinc-400 dark:text-zinc-500'} ${me && name === me.name ? 'underline decoration-red-300 decoration-2 underline-offset-2' : ''}">${escapeHtml(name || '미정')}</span>
+                    <span data-name class="truncate text-sm ${isWinner ? 'font-extrabold text-red-600 dark:text-red-400' : name ? 'font-semibold' : 'font-medium text-zinc-400 dark:text-zinc-500'} ${me && name === me.name ? 'underline decoration-red-300 decoration-2 underline-offset-2' : ''}">${escapeHtml(name || slotLabel(b, m, i) || '미정')}</span>
                     ${name ? `<span class="flex-shrink-0 text-[11px] text-zinc-400 dark:text-zinc-500">${escapeHtml(divisionOf(name))}</span>` : ''}
                 </span>
                 ${wins !== null ? `<span class="text-sm font-extrabold tabular-nums ${isWinner ? 'text-red-600 dark:text-red-400' : 'text-zinc-400'}">${wins}</span>` : ''}
@@ -649,22 +721,6 @@
         let nextReal = m.next ? byId[m.next] : null;
         while (nextReal && nextReal.bye) nextReal = nextReal.next ? byId[nextReal.next] : null;
         const canReset = m.status === 'confirmed' && (m.third || !nextReal || nextReal.status !== 'confirmed');
-        // 조작 줄: 글자와 함께 카드 폭을 나눠 갖는 칸. 주 동작(보고가 있으면 확정, 없으면 입력)은 빨간 글씨.
-        const plain = 'text-zinc-500 hover:bg-zinc-50 hover:text-red-600 dark:text-zinc-400 dark:hover:bg-zinc-800/60 dark:hover:text-red-400';
-        const main = 'text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-500/10';
-        const action = (label, icon, attrs, tone, href) => {
-            const cls = `flex h-7 min-w-0 flex-1 items-center justify-center gap-1 text-[11px] font-semibold transition-colors ${tone}`;
-            const inner = `<i data-lucide="${icon}" class="h-3 w-3 flex-shrink-0"></i>${label}`;
-            return href ? `<a href="${href}" ${attrs} class="${cls}">${inner}</a>` : `<button type="button" ${attrs} class="${cls}">${inner}</button>`;
-        };
-        const actions = [];
-        if (canAdmin && !drafting && m.status === 'pending') {
-            actions.push(action('점수판', 'trophy', 'aria-label="점수판으로 경기"', plain, `${root.dataset.scoreboard}?league=${code}&match=${m.id}`));
-            actions.push(action('입력', 'pencil', `data-confirm="${m.id}" aria-label="${m.report ? '다르게 입력' : '결과 입력'}"`, m.report ? plain : main));
-            if (m.report) actions.push(action('확정', 'check', `data-confirm-report="${m.id}" aria-label="보고대로 확정"`, main));
-        } else if (canAdmin && canReset) {
-            actions.push(action('되돌리기', 'rotate-ccw', `data-reset="${m.id}"`, plain));
-        }
         // 보고 줄은 한 줄로 (두 줄로 늘면 옆 카드와 겹친다). 게임 점수는 눌러 보면(title) 나오고, 확인 대기 패널과 결과 입력 창에도 있다.
         const reportFull = m.report ? `${m.report.by} 보고 · 승자 ${m.report.winner}${m.report.games ? ` (${m.report.games.map(([a, c]) => `${a}:${c}`).join(', ')})` : ''}` : '';
         const report = m.report && m.status === 'pending'
@@ -676,8 +732,129 @@
             <div class="border-t border-zinc-100 dark:border-zinc-800">${row(m.players[0], 0)}${row(m.players[1], 1)}</div>
             ${games ? `<p class="border-t border-zinc-100 px-2.5 py-1 text-[11px] leading-4 tabular-nums text-zinc-400 dark:border-zinc-800 dark:text-zinc-500">${games}</p>` : ''}
             ${report}
-            ${actions.length ? `<div class="flex divide-x divide-zinc-100 border-t border-zinc-100 dark:divide-zinc-800 dark:border-zinc-800">${actions.join('')}</div>` : ''}
+            ${matchActions(m, canReset)}
         </article>`;
+    }
+
+    // 운영진 조작 줄: 글자와 함께 카드 폭을 나눠 갖는 칸. 주 동작(보고가 있으면 확정, 없으면 입력)은 빨간 글씨.
+    function matchActions(m, canReset) {
+        if (!canAdmin || tournament.status === 'draft') return '';
+        const plain = 'text-zinc-500 hover:bg-zinc-50 hover:text-red-600 dark:text-zinc-400 dark:hover:bg-zinc-800/60 dark:hover:text-red-400';
+        const main = 'text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-500/10';
+        const action = (label, icon, attrs, tone, href) => {
+            const cls = `flex h-7 min-w-0 flex-1 items-center justify-center gap-1 text-[11px] font-semibold transition-colors ${tone}`;
+            const inner = `<i data-lucide="${icon}" class="h-3 w-3 flex-shrink-0"></i>${label}`;
+            return href ? `<a href="${href}" ${attrs} class="${cls}">${inner}</a>` : `<button type="button" ${attrs} class="${cls}">${inner}</button>`;
+        };
+        const actions = [];
+        if (m.status === 'pending') {
+            actions.push(action('점수판', 'trophy', 'aria-label="점수판으로 경기"', plain, `${root.dataset.scoreboard}?league=${code}&match=${m.id}`));
+            actions.push(action('입력', 'pencil', `data-confirm="${m.id}" aria-label="${m.report ? '다르게 입력' : '결과 입력'}"`, m.report ? plain : main));
+            if (m.report) actions.push(action('확정', 'check', `data-confirm-report="${m.id}" aria-label="보고대로 확정"`, main));
+        } else if (canReset) {
+            actions.push(action('되돌리기', 'rotate-ccw', `data-reset="${m.id}"`, plain));
+        }
+        return actions.length ? `<div class="flex divide-x divide-zinc-100 border-t border-zinc-100 dark:divide-zinc-800 dark:border-zinc-800">${actions.join('')}</div>` : '';
+    }
+
+    // 본선 빈 자리의 이름표: 1라운드는 자리표('A조 1위'), 위 라운드는 부전승으로 바로 올라올 자리표가 있으면 그것
+    function slotLabel(b, m, i) {
+        if (m.round === 1) return m.seats && m.seats[i] ? seatText(m.seats[i]) : '';
+        let c = b.matches.find((x) => x.next === m.id && x.slot === i);
+        while (c) {
+            if (c.round === 1) { const seats = (c.seats || []).filter(Boolean); return seats.length === 1 ? seatText(seats[0]) : ''; }
+            if (!c.bye) return '';
+            c = b.matches.find((x) => x.next === c.id);
+        }
+        return '';
+    }
+
+    // ---------- 예선: 조마다 순위표와 조 안의 경기 ----------
+    function renderPools(b) {
+        const edit = editMode && canAdmin;
+        return `<div class="mx-auto grid max-w-5xl items-start gap-3 sm:grid-cols-2 lg:grid-cols-3">${b.prelim.pools.map((pool) => renderPool(b, pool, edit)).join('')}</div>`;
+    }
+    function renderPool(b, pool, edit) {
+        const drafting = tournament.status === 'draft';
+        const size = pool.players.length;
+        const matches = b.prelim.matches.filter((m) => m.pool === pool.label);
+        const played = matches.filter((m) => m.status === 'confirmed').length;
+        const quiet = 'text-zinc-500 dark:text-zinc-400';
+        const [statusText, statusTone] = size === 1 ? ['본선 직행', quiet]
+            : drafting ? [size === 2 ? '2명 · 둘 다 본선' : '3명 리그', quiet]
+            : pool.state === 'done' ? ['순위 확정', quiet]
+            : pool.state === 'tie' ? ['동률 · 순위 확인', 'text-amber-700 dark:text-amber-300']
+            : [`${played}/${matches.length}경기`, 'text-red-600 dark:text-red-400'];
+        const head = `<div class="flex items-baseline justify-between gap-2 px-4 pt-3">
+                <h3 class="text-base font-extrabold">${escapeHtml(pool.label)}조</h3><span class="text-xs font-semibold ${statusTone}">${statusText}</span>
+            </div>`;
+        if (edit) {
+            // 조 수정: 세 자리를 모두 보여 이름을 끌어 다른 조의 자리(빈 자리 포함)에 놓는다
+            const slots = [0, 1, 2].map((i) => {
+                const name = pool.players[i];
+                return name
+                    ? `<div data-slot data-pool="${escapeHtml(pool.label)}" data-index="${i}" data-drag="${escapeHtml(name)}" class="flex h-9 cursor-grab select-none items-center justify-between gap-2 rounded-lg border border-zinc-200 bg-white px-2.5 [-webkit-touch-callout:none] active:cursor-grabbing dark:border-zinc-700 dark:bg-zinc-900">
+                        <span class="flex min-w-0 items-baseline gap-1.5"><span data-name class="truncate text-sm font-semibold">${escapeHtml(name)}</span><span class="flex-shrink-0 text-[11px] text-zinc-400 dark:text-zinc-500">${escapeHtml(divisionOf(name))}</span></span>
+                        <i data-lucide="grip-vertical" class="h-4 w-4 flex-shrink-0 text-zinc-300 dark:text-zinc-600"></i>
+                    </div>`
+                    : `<div data-slot data-pool="${escapeHtml(pool.label)}" data-index="${i}" class="flex h-9 items-center justify-center rounded-lg border border-dashed border-zinc-300 text-xs text-zinc-400 dark:border-zinc-700 dark:text-zinc-500">빈 자리</div>`;
+            }).join('');
+            return `<section class="rounded-2xl border-2 border-dashed border-red-300 bg-red-50/40 pb-2 dark:border-red-500/40 dark:bg-red-500/5">${head}<div class="mt-2 space-y-1 px-2">${slots}</div></section>`;
+        }
+        const mine = me && pool.players.includes(me.name);
+        const done = pool.state === 'done';
+        const nameCell = (name) => `<span class="font-semibold [overflow-wrap:anywhere] ${me && name === me.name ? 'underline decoration-red-300 decoration-2 underline-offset-2' : ''}">${escapeHtml(name)}</span> <span class="text-[11px] text-zinc-400 dark:text-zinc-500">${escapeHtml(divisionOf(name))}</span>`;
+        // 순위표: 편성 중에는 이름만, 시작한 뒤에는 순위·승패·게임 득실. 1·2위(본선 진출)는 순위 숫자를 빨갛게, 탈락은 흐리게.
+        const table = drafting || size === 1
+            ? `<ul class="mt-1 px-4 text-sm">${pool.players.map((n) => `<li class="py-1">${nameCell(n)}</li>`).join('')}</ul>`
+            : `<table class="mt-1 w-full text-sm">
+                <thead><tr class="text-[11px] text-zinc-400 dark:text-zinc-500"><th class="w-10 pl-4 text-left font-medium">순위</th><th class="text-left font-medium">이름</th><th class="text-right font-medium">승패</th><th class="pl-3 pr-4 text-right font-medium">게임</th></tr></thead>
+                <tbody>${pool.standings.map((r) => {
+                    const out = done && r.rank > 2, up = done && r.rank <= 2;
+                    return `<tr class="${out ? 'opacity-50' : ''}">
+                        <td class="py-1 pl-4 text-xs font-bold tabular-nums ${up ? 'text-red-600 dark:text-red-400' : 'text-zinc-400'}">${r.rank || '–'}</td>
+                        <td class="py-1">${nameCell(r.name)}</td>
+                        <td class="whitespace-nowrap py-1 text-right tabular-nums">${r.wins}승 ${r.losses}패</td>
+                        <td class="whitespace-nowrap py-1 pl-3 pr-4 text-right tabular-nums text-zinc-500 dark:text-zinc-400">${r.games_won}:${r.games_lost}</td>
+                    </tr>`;
+                }).join('')}</tbody></table>`;
+        let note = '';
+        if (size === 1) note = '예선 없이 본선에 오릅니다. 본선에서는 이 조 1위 자리에 들어갑니다.';
+        else if (size === 2 && !done) note = '둘 다 본선에 오릅니다. 이 경기로 1·2위를 정합니다.';
+        else if (done) note = `본선 진출 · ${pool.ranking.slice(0, 2).map((n, i) => `${i + 1}위 ${n}`).join(' · ')}`;
+        let tie = '';
+        if (!drafting && pool.state === 'tie') {
+            const why = pool.tie_reason === 'no_games' ? '게임 점수 없이 승자만 넣은 경기가 있어 동률을 가릴 수 없습니다.' : '승수와 게임·점수 비율까지 같아 규정으로 가릴 수 없습니다.';
+            tie = `<div class="mx-4 mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
+                <p class="break-keep">${escapeHtml(pool.tied.map((g) => g.join('·')).join(', '))} 동률 · ${why}</p>
+                ${canAdmin ? `<div class="mt-1.5">${button('순위 정하기', `data-pool-order="${escapeHtml(pool.label)}"`, 'primary')}</div>` : '<p class="mt-0.5">운영진이 순위를 정합니다.</p>'}
+            </div>`;
+        }
+        return `<section class="overflow-hidden rounded-2xl border bg-white dark:bg-zinc-900 ${mine ? 'border-red-300 dark:border-red-500/40' : 'border-zinc-200 dark:border-zinc-800'}">
+            ${head}${table}${tie}
+            ${note ? `<p class="break-keep px-4 pb-2 pt-1 text-xs text-zinc-500 dark:text-zinc-400">${escapeHtml(note)}</p>` : '<div class="h-2"></div>'}
+            ${matches.map(renderPoolMatch).join('')}
+        </section>`;
+    }
+    function renderPoolMatch(m) {
+        const drafting = tournament.status === 'draft';
+        const wins = m.games ? [0, 1].map((i) => m.games.filter(([a, c]) => (i === 0 ? a > c : c > a)).length) : null;
+        const side = (i) => {
+            const name = m.players[i];
+            const tone = m.winner === name ? 'font-extrabold text-red-600 dark:text-red-400' : m.winner ? 'font-medium text-zinc-400 dark:text-zinc-500' : 'font-semibold';
+            return `<span class="min-w-0 flex-1 truncate text-sm ${i === 0 ? 'text-right' : ''} ${tone} ${me && name === me.name ? 'underline decoration-red-300 decoration-2 underline-offset-2' : ''}">${escapeHtml(name)}</span>`;
+        };
+        const middle = drafting ? '<span class="text-xs text-zinc-400">vs</span>'
+            : m.status === 'confirmed' ? (wins ? `<span class="text-sm font-extrabold tabular-nums">${wins[0]} : ${wins[1]}</span>` : '<span class="text-[11px] font-semibold text-zinc-400">확정</span>')
+            : '<span class="whitespace-nowrap text-[11px] font-semibold text-red-600 dark:text-red-400">경기 가능</span>';
+        const games = m.games ? `<p class="-mt-1 pb-1.5 text-center text-[11px] tabular-nums text-zinc-400 dark:text-zinc-500">${m.games.map(([a, c]) => `${a}:${c}`).join(', ')}</p>` : '';
+        const reportFull = m.report ? `${m.report.by} 보고 · 승자 ${m.report.winner}${m.report.games ? ` (${m.report.games.map(([a, c]) => `${a}:${c}`).join(', ')})` : ''}` : '';
+        const report = m.report && m.status === 'pending'
+            ? `<p title="${escapeHtml(reportFull)}" class="truncate px-3 pb-1.5 text-center text-[11px] leading-4 text-amber-700 dark:text-amber-300"><strong>${escapeHtml(m.report.by)}</strong> 보고 · 승자 ${escapeHtml(m.report.winner)}</p>` : '';
+        return `<div data-match="${m.id}" class="border-t border-zinc-100 dark:border-zinc-800">
+            <div class="flex items-center gap-2 px-3 py-2">${side(0)}<span class="flex w-16 flex-shrink-0 justify-center">${middle}</span>${side(1)}</div>
+            ${games}${report}${matchActions(m, m.status === 'confirmed' && !m.locked)}
+        </div>`;
     }
 
     // 수정 모드의 1라운드 카드: 두 자리를 모두 보여 주고, 이름을 끌어 다른 자리(빈 자리 포함)에 놓으면 자리가 바뀐다
@@ -750,7 +927,8 @@
                 d.ghost.remove();
                 d.row.classList.remove('opacity-40');
                 if (d.target) d.target.classList.remove(...HIGHLIGHT);
-                if (commit && d.target) act(`/brackets/${activeGroup}/move`, { name: d.name, match: d.target.dataset.match, slot: Number(d.target.dataset.index) }, { done: '자리를 옮겼습니다.', busy: '자리를 옮기는 중입니다', quick: true });
+                if (commit && d.target && d.target.dataset.pool) act(`/brackets/${activeGroup}/pool-move`, { name: d.name, pool: d.target.dataset.pool, index: Number(d.target.dataset.index) }, { done: '조를 옮겼습니다.', busy: '조를 옮기는 중입니다', quick: true });
+                else if (commit && d.target) act(`/brackets/${activeGroup}/move`, { name: d.name, match: d.target.dataset.match, slot: Number(d.target.dataset.index) }, { done: '자리를 옮겼습니다.', busy: '자리를 옮기는 중입니다', quick: true });
             }
             d = null; dragging = false;
         }
@@ -782,6 +960,7 @@
 
     // ---------- 참가자 추가 (운영진) ----------
     let editMode = false;
+    let stageView = null;   // 예선이 있는 그룹에서 고른 탭('prelim' · 'main'). null이면 진행 상황에 맞춘다.
     let refreshAddList = () => {};
     (function setupAddPicker() {
         const input = $('add-input'), list = $('add-list');
@@ -872,8 +1051,8 @@
     // ---------- 결과 입력 패널 ----------
     function openResult(match, mode) {
         pendingAction = { match, mode };
-        const b = tournament.brackets[match.id.split('-')[0]];
-        $('result-title').textContent = `${groupName(match.id.split('-')[0])} ${match.third ? '3·4위전' : b.labels[match.round]} · ${match.best_of}판 ${Math.floor(match.best_of / 2) + 1}선 · ${match.players.join(' vs ')}`;
+        const key = match.id.split('-')[0];
+        $('result-title').textContent = `${groupName(key)} ${stageOf(key, match)} · ${match.best_of}판 ${Math.floor(match.best_of / 2) + 1}선 · ${match.players.join(' vs ')}`;
         $('result-winners').innerHTML = match.players.map((p) => `<button type="button" data-winner="${escapeHtml(p)}" aria-current="false"
             class="h-12 rounded-xl border border-zinc-200 text-sm font-bold text-zinc-700 transition-colors aria-[current=true]:border-red-600 aria-[current=true]:bg-red-600 aria-[current=true]:text-white dark:border-zinc-700 dark:text-zinc-300 dark:aria-[current=true]:border-red-500 dark:aria-[current=true]:bg-rubber">${escapeHtml(p)}</button>`).join('');
         $('result-games').value = match.report && match.report.games ? match.report.games.map(([a, c]) => `${a}:${c}`).join(', ') : '';
@@ -915,6 +1094,44 @@
         } finally { $('result-submit').disabled = false; }
     });
 
+    // ---------- 예선 동률: 운영진이 순위를 정한다 ----------
+    // 동률 묶음의 선수를 높은 순위부터 차례로 누르면, 규정으로 정해진 나머지 순위와 합쳐 조 전체 순서를 보낸다.
+    let ordering = null;
+    function openOrder(groupKey, label) {
+        const pool = tournament.brackets[groupKey].prelim.pools.find((p) => p.label === label);
+        if (!pool || !pool.tied.length) return;
+        ordering = { groupKey, pool, picked: [] };
+        $('order-title').textContent = `${groupName(groupKey)} 예선 ${label}조`;
+        drawOrder();
+        $('order-panel').hidden = false;
+    }
+    function drawOrder() {
+        const { pool, picked } = ordering;
+        const tied = pool.tied[0];
+        const start = Math.min(...tied.map((n) => pool.standings.find((r) => r.name === n).rank));
+        $('order-picked').innerHTML = tied.map((_, i) => `<li class="flex items-baseline gap-2"><span class="w-8 text-xs font-bold text-zinc-400">${start + i}위</span><strong class="${picked[i] ? '' : 'font-medium text-zinc-300 dark:text-zinc-600'}">${escapeHtml(picked[i] || '—')}</strong></li>`).join('');
+        $('order-choices').innerHTML = tied.filter((n) => !picked.includes(n)).map((n) => `<button type="button" data-pick="${escapeHtml(n)}" class="h-11 rounded-xl border border-zinc-200 text-sm font-bold text-zinc-700 transition-colors hover:border-red-400 hover:text-red-700 dark:border-zinc-700 dark:text-zinc-300">${escapeHtml(n)}</button>`).join('');
+        $('order-submit').disabled = picked.length < tied.length;
+    }
+    $('order-choices').addEventListener('click', (e) => {
+        const b = e.target.closest('[data-pick]');
+        if (!b || !ordering) return;
+        ordering.picked.push(b.dataset.pick);
+        drawOrder();
+    });
+    $('order-cancel').addEventListener('click', () => { $('order-panel').hidden = true; ordering = null; });
+    $('order-panel').addEventListener('click', (e) => { if (e.target === $('order-panel')) { $('order-panel').hidden = true; ordering = null; } });
+    $('order-submit').addEventListener('click', async () => {
+        const { groupKey, pool, picked } = ordering;
+        const tied = new Set(pool.tied[0]);
+        // 순위표 순서에서 동률 묶음 자리만 고른 순서로 바꾼다
+        let k = 0;
+        const order = pool.standings.map((r) => (tied.has(r.name) ? picked[k++] : r.name));
+        $('order-panel').hidden = true;
+        ordering = null;
+        await act(`/brackets/${groupKey}/pool-order`, { pool: pool.label, order }, { done: '조 순위를 정했습니다.', busy: '순위를 정하는 중입니다' });
+    });
+
     // ---------- 참가 QR ----------
     // 참가 링크(코드가 채워진 참가 화면)를 QR로 크게 보여 준다. 폰 카메라로 찍으면 바로 이름만 고르면 된다.
     function openQr() {
@@ -935,8 +1152,10 @@
 
     // ---------- 버튼 처리 ----------
     root.addEventListener('click', async (e) => {
-        const el = e.target.closest('[data-group], [data-remove], #draft-button, #start-button, #copy-join, #show-qr, [data-report], [data-confirm], [data-confirm-report], [data-reset], [data-third], [data-sound], [data-edit], [data-rebuild], [data-place]');
+        const el = e.target.closest('[data-group], [data-remove], #draft-button, #start-button, #copy-join, #show-qr, [data-report], [data-confirm], [data-confirm-report], [data-reset], [data-third], [data-sound], [data-edit], [data-rebuild], [data-place], [data-stage], [data-pool-order]');
         if (!el) return;
+        if (el.dataset.stage) { stageView = el.dataset.stage; if (stageView === 'main') editMode = false; render(); return; }
+        if (el.dataset.poolOrder) { openOrder(activeGroup, el.dataset.poolOrder); return; }
         if (el.hasAttribute('data-sound')) { soundOn = !soundOn; storage.set('league_sound', soundOn ? 'on' : 'off'); renderPendingPanel(pendingReports(tournament)); if (soundOn) beep(); return; }
         if (el.hasAttribute('data-edit')) { editMode = !editMode; render(); return; }
         if (el.hasAttribute('data-place')) {
@@ -947,13 +1166,13 @@
             return;
         }
         if (el.dataset.rebuild) { if (confirm(`${groupName(activeGroup)} 대진표를 무작위로 다시 만들까요?`)) act(`/brackets/${activeGroup}/rebuild`, { seed: el.dataset.rebuild }, { done: '대진표를 다시 만들었습니다.', busy: '대진표를 다시 짜는 중입니다' }); return; }
-        const find = (id) => Object.values(tournament.brackets).flatMap((b) => b.matches.concat(b.third ? [b.third] : [])).find((m) => m.id === id);
+        const find = (id) => Object.values(tournament.brackets).flatMap(allMatches).find((m) => m.id === id);
         if (el.dataset.third) {
             const on = el.dataset.third === 'on';
             act('/third-place', { group: activeGroup, enabled: on }, { done: on ? '3·4위전을 추가했습니다.' : '3·4위전을 뺐습니다.', busy: on ? '3·4위전을 추가하는 중입니다' : '3·4위전을 빼는 중입니다', quick: true });
             return;
         }
-        if (el.dataset.group) { activeGroup = el.dataset.group; render(); }
+        if (el.dataset.group) { activeGroup = el.dataset.group; stageView = null; render(); }
         else if (el.dataset.remove) { if (confirm(`${el.dataset.remove}${eulReul(el.dataset.remove)} 참가 목록에서 제외할까요?`)) act('/participants', { name: el.dataset.remove, remove: true }, { done: '제외했습니다.', busy: '참가자를 빼는 중입니다' }); }
         else if (el.id === 'draft-button') act('/draft', {}, { done: '대진표를 만들었습니다. 고친 뒤 시작하세요.', busy: '대진표를 만드는 중입니다' });
         else if (el.id === 'start-button') { if (confirm('참가 접수를 마감하고 토너먼트를 시작할까요? 선수들 폰에 대진표가 보이고 결과를 보낼 수 있게 됩니다.')) act('/start', {}, { done: '토너먼트를 시작했습니다.', busy: '토너먼트를 시작하는 중입니다' }); }
@@ -965,7 +1184,11 @@
         else if (el.dataset.report) openResult(find(el.dataset.report), 'report');
         else if (el.dataset.confirm) openResult(find(el.dataset.confirm), 'confirm');
         else if (el.dataset.confirmReport) act(`/matches/${el.dataset.confirmReport}/confirm`, {}, { done: '보고대로 확정했습니다.', busy: '결과를 확정하는 중입니다', quick: true });
-        else if (el.dataset.reset) { if (confirm('이 경기 결과를 되돌릴까요?')) act(`/matches/${el.dataset.reset}/reset`, {}, { done: '되돌렸습니다.', busy: '결과를 되돌리는 중입니다' }); }
+        else if (el.dataset.reset) {
+            const m = find(el.dataset.reset);
+            const message = m && m.prelim ? '이 예선 경기 결과를 되돌릴까요? 조 순위가 정해져 본선에 올라간 선수가 있으면 본선 자리에서도 빠집니다.' : '이 경기 결과를 되돌릴까요?';
+            if (confirm(message)) act(`/matches/${el.dataset.reset}/reset`, {}, { done: '되돌렸습니다.', busy: '결과를 되돌리는 중입니다' });
+        }
     });
     root.addEventListener('change', (e) => {
         const select = e.target.closest('[data-move]');

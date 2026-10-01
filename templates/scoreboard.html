@@ -511,7 +511,9 @@
         const t = data.tournament;
         const groupKey = LEAGUE.match.split('-')[0];
         const bracket = t.brackets[groupKey];
-        const match = bracket && bracket.matches.find((m) => m.id === LEAGUE.match);
+        // 본선 경기 · 3·4위전 · 예선 경기 모두 찾는다
+        const all = bracket ? bracket.matches.concat(bracket.third ? [bracket.third] : [], bracket.prelim ? bracket.prelim.matches : []) : [];
+        const match = all.find((m) => m.id === LEAGUE.match);
         if (!match || !match.players.every(Boolean)) throw new Error('이 경기는 아직 두 선수가 정해지지 않았습니다.');
         const division = (name) => (t.participants.find((p) => p.name === name) || {}).division || '미지정';
         state.players = match.players.map((name) => ({ name, division: division(name) }));
@@ -526,7 +528,8 @@
         });
         setup.querySelectorAll('[data-player], [data-clear], #swap-players').forEach((el) => { el.disabled = true; });
         const group = (t.groups.find((g) => g.key === groupKey) || {}).name || groupKey;
-        $('league-banner-text').textContent = `토너먼트 ${t.name} · ${group} ${bracket.labels[match.round]} · 끝나면 결과가 대진표로 보내집니다`;
+        const stage = match.prelim ? `예선 ${match.pool}조` : match.third ? '3·4위전' : bracket.labels[match.round];
+        $('league-banner-text').textContent = `토너먼트 ${t.name} · ${group} ${stage} · 끝나면 결과가 대진표로 보내집니다`;
         $('league-banner-link').href = LEAGUE.backUrl;
         $('league-banner').hidden = false;
         // 왼쪽 위 버튼은 메인이 아니라 대진표로
