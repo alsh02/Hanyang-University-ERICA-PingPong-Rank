@@ -34,7 +34,8 @@ LOG_SHEET = "토너먼트로그"
 TOURNAMENT_HEADERS = ["코드", "상태", "생성일시", "갱신일시", "상태JSON", "관리자코드"]
 LOG_HEADERS = ["코드", "종류", "시각", "내용JSON"]
 
-CACHE_TTL = 3            # 참가자 화면이 몇 초마다 새로 고쳐도 시트 호출은 이 간격으로만 나간다 (인스턴스마다)
+CACHE_TTL = 5            # 참가자 화면이 몇 초마다 새로 고쳐도 시트 읽기는 이 간격으로만 나간다 (인스턴스마다, 분당 12회)
+PATCH_WINDOW = 3         # 방금(이 시간 안에) 시트에서 새로 읽은 캐시만, 이 인스턴스가 쓴 내용을 직접 반영해 고친다
 WRITE_LIMIT = 240        # 10분당 쓰기 허용 횟수 (공개 주소이므로 최소한의 남용 방지)
 CODE_ALPHABET = "0123456789"   # 참가 코드·관리자 코드 모두 숫자 6자리
 ADMIN_LOGIN_LIMIT = 30         # 10분당 관리자 코드 입력 시도 허용 횟수
@@ -65,7 +66,7 @@ def kst_now():
 # 저장소: 구글 시트 두 장
 # ---------------------------------------------------------------------------
 _lock = threading.Lock()
-_cache = {"rows": None, "logs": None, "expires_at": 0.0}
+_cache = {"rows": None, "logs": None, "expires_at": 0.0, "fresh_at": 0.0, "gen": 0}   # gen: 시트에서 읽을 때마다 1씩
 _writes = deque()
 _admin_logins = deque()
 _sheets_ready = False
@@ -126,12 +127,45 @@ def _read_all(force=False):
             _cache["rows"] = ranges[0].get("values", []) if len(ranges) > 0 else []
             _cache["logs"] = ranges[1].get("values", []) if len(ranges) > 1 else []
             _cache["expires_at"] = now + CACHE_TTL
+            _cache["fresh_at"] = now
+            _cache["gen"] += 1
         return _cache["rows"], _cache["logs"]
+
+
+def _cache_gen():
+    with _lock:
+        return _cache["gen"]
 
 
 def _invalidate():
     with _lock:
         _cache["expires_at"] = 0.0
+
+
+def _after_write(gen, rows=None, logs=None):
+    # 이 인스턴스가 방금 시트에 쓴 내용을 캐시에 직접 반영한다 — 쓰자마자 캐시를 비우면 바로 다음 새로 고침이 시트를 또 읽어
+    # 구글 읽기 한도(분당 60회)를 그만큼 더 쓴다(1단계 동시 접속 시험: 읽기의 약 절반).
+    # 고치는 건 셋 다 맞을 때만이다. 아니면 예전처럼 캐시를 비워 다음 새로 고침이 시트를 읽게 한다.
+    # - 쓰기 전과 지금 사이에 시트를 다시 읽지 않았다(gen이 그대로). 읽었다면 그 읽기에 방금 쓴 줄이 이미 들어 있을 수 있어
+    #   또 붙이면 줄이 겹치고 rev(로그 줄 수)가 실제보다 커진다 — 그러면 다음에 시트를 읽을 때 rev가 거꾸로 간다.
+    # - 캐시가 아직 살아 있고, 방금(PATCH_WINDOW 안에) 시트에서 새로 읽은 것이다(운영진 조작·결과 보고는 늘 새로 읽고 시작한다).
+    #   그래야 그사이 다른 인스턴스가 쓴 줄을 빠뜨릴 틈이 작다. 고친 캐시도 원래 만료 시각에 끝나므로 다른 인스턴스 내용이 늦게 보이는 한도는 그대로다.
+    # rows: {시트 행 번호: 행 값}, logs: 덧붙인 로그 줄 목록. 읽는 쪽이 들고 있는 목록을 건드리지 않게 새 목록으로 바꾼다.
+    with _lock:
+        now = time.monotonic()
+        if (_cache["rows"] is None or _cache["gen"] != gen or now >= _cache["expires_at"]
+                or now - _cache["fresh_at"] > PATCH_WINDOW):
+            _cache["expires_at"] = 0.0
+            return
+        if rows:
+            patched = list(_cache["rows"])
+            for row_no, values in rows.items():
+                while len(patched) < row_no:
+                    patched.append([])
+                patched[row_no - 1] = list(values)
+            _cache["rows"] = patched
+        if logs:
+            _cache["logs"] = list(_cache["logs"]) + [list(v) for v in logs]
 
 
 def _check_write_limit():
@@ -186,26 +220,38 @@ def commit_op(state, op, joins=()):
     # 같은 행에 써서 한쪽이 사라진다 — 프리뷰에서 8건 동시에 보내 확인했다.)
     # 스냅숏은 그다음에 고치는 사본이다. 저장이 실패하거나 다른 운영진의 저장에 덮여도 기록은 다음에 읽을 때 다시 적용된다.
     # 스냅숏은 행 번호로 고친다 (읽을 때 기억해 둔 것 — 방 행은 지우지 않으므로 밀리지 않는다).
-    append_logs(state, [("참가", j) for j in joins] + [("운영", op)])
+    # 캐시는 로그 줄과 스냅숏을 둘 다 쓴 뒤에 한 번에 고친다. 로그만 먼저 반영하면 그사이 새로 고침이 '새 기록 + 예전 스냅숏'을 받고,
+    # 곧이어 rev는 같은데 스냅숏의 갱신 시각만 다른 상태를 받아 화면이 쓸데없이 다시 그려진다(동시 접속 시험에서 발견).
+    gen = _cache_gen()
+    _, logs = _append_log_rows(state, [("참가", j) for j in joins] + [("운영", op)])
     state["applied"].append(op["id"])
     state["updated_at"] = kst_now()
-    row_no = state["_row_no"]
+    row_no, values = state["_row_no"], _row_values(state)
     try:
-        _spreadsheet().values_update(f"'{TOURNAMENT_SHEET}'!A{row_no}:F{row_no}", _WRITE_PARAMS, {"values": [_row_values(state)]})
+        _spreadsheet().values_update(f"'{TOURNAMENT_SHEET}'!A{row_no}:F{row_no}", _WRITE_PARAMS, {"values": [values]})
     except Exception as e:
         _deps["logger"].warning("리그전 스냅숏 저장 실패(운영 기록은 로그에 남음): %s", e)
-    _invalidate()
+        _invalidate()
+        return
+    _after_write(gen, rows={row_no: values}, logs=logs)
 
 
 def append_logs(state, entries):
     # entries: [(종류, 내용)]. 여러 줄도 호출 한 번으로 덧붙인다 — 한 번의 호출은 통째로 들어가거나 통째로 실패한다.
+    gen = _cache_gen()
+    now, logs = _append_log_rows(state, entries)
+    _after_write(gen, logs=logs)
+    return now
+
+
+def _append_log_rows(state, entries):
+    # 로그 줄을 시트에 덧붙이기만 한다(캐시는 부른 쪽이 고친다). 돌려주는 값: (기록 시각, 덧붙인 줄)
     _ensure_sheets()
     now = kst_now()
     values = [[state["code"], kind, now, json.dumps(p, ensure_ascii=False)] for kind, p in entries]
     _retrying(lambda: _spreadsheet().values_append(RANGES[1], {**_WRITE_PARAMS, "insertDataOption": "INSERT_ROWS"}, {"values": values}))
-    _invalidate()
     state["rev"] = state.get("rev", 0) + len(entries)
-    return now
+    return now, values
 
 
 def delete_tournament(state):
