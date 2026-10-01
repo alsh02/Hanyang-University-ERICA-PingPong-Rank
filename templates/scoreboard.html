@@ -163,7 +163,7 @@
     <!-- ================= 결과 ================= -->
     <div id="result" hidden class="absolute inset-0 z-40 flex items-center justify-center bg-zinc-900/60 p-4 backdrop-blur-sm">
         <div class="relative w-full max-w-sm rounded-2xl border border-zinc-200 bg-white p-6 text-center shadow-xl dark:border-zinc-800 dark:bg-zinc-900">
-            <!-- 토너먼트 경기: 결과를 보내지 않고도 바로 대진표로 돌아간다 -->
+            <!-- 토너먼트 경기: 전적에는 남기지 않고 결과만 대진표에 반영한 뒤 돌아간다 (이미 보냈으면 바로 돌아간다) -->
             <a id="result-close" hidden href="#" aria-label="대진표로 돌아가기" title="대진표로 돌아가기"
                class="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200">
                 <i data-lucide="x" class="h-5 w-5"></i>
@@ -318,6 +318,7 @@
         $('result-detail').textContent = state.games.map(([a, b], i) => `${i + 1}게임 ${a}:${b}`).join(' · ');
         $('result-message').textContent = CAN_SAVE ? '' : '구글 시트 연동 전이라 저장할 수 없습니다.';
         if (CAN_SAVE) $('save-button').disabled = false;
+        leagueSent = false;   // 되돌렸다가 다시 끝냈으면 새 결과다
         result.hidden = false;
     }
 
@@ -592,6 +593,43 @@
         else if (key === 'backspace' || key === 'z') { event.preventDefault(); undo(); }
     });
 
+    // ---------- 토너먼트 결과 보내기 ----------
+    // '전적에 저장'은 대진표에 반영하고 전적(경기기록)에도 남긴다. 결과 상자의 X는 아직 안 보낸 결과를 대진표에만 반영하고
+    // (record: false — 운영진 기기면 바로 확정, 선수 기기면 확인 대기) 대진표로 돌아간다. 이미 보냈으면 바로 돌아간다.
+    let leagueSent = false;
+    async function sendLeagueResult(record) {
+        const response = await fetch(`/api/league/${LEAGUE.code}/matches/${LEAGUE.match}/report`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ winner: state.players[gameWins(0) > gameWins(1) ? 0 : 1].name, games: state.games, record,
+                                   admin_key: LEAGUE.adminKey || undefined, token: LEAGUE.token || undefined }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || '결과를 보내지 못했습니다.');
+        leagueSent = true;
+        return data;
+    }
+    if (LEAGUE) {
+        $('result-close').addEventListener('click', async (event) => {
+            if (leagueSent) return;   // 이미 보냈으면 링크대로 대진표로
+            event.preventDefault();
+            const hideBusy = Busy.show('결과를 대진표에 반영하는 중입니다');
+            try {
+                await sendLeagueResult(false);
+                location.href = LEAGUE.backUrl;   // 상자는 대진표가 뜰 때까지 둔다
+            } catch (error) {
+                hideBusy();
+                // 못 보냈으면(이미 확정된 경기 · 이 경기 선수가 아닌 기기 등) 까닭을 보여 주고, 그래도 돌아갈 수 있게 한다
+                const message = $('result-message');
+                message.textContent = `${error.message} `;
+                const back = document.createElement('a');
+                back.href = LEAGUE.backUrl; back.className = 'underline'; back.textContent = '보내지 않고 대진표로';
+                message.appendChild(back);
+                message.className = 'mt-3 text-xs font-semibold text-amber-600 dark:text-amber-400';
+            }
+        });
+    }
+
     // ---------- 저장 ----------
     if (CAN_SAVE) {
         $('save-button').addEventListener('click', async () => {
@@ -601,21 +639,17 @@
             const hideBusy = Busy.show(LEAGUE ? '결과를 보내는 중입니다' : '전적을 저장하는 중입니다');
             $('result-message').className = 'mt-3 text-xs font-semibold text-zinc-500 dark:text-zinc-400';
             try {
-                const request = LEAGUE ? {
-                    url: `/api/league/${LEAGUE.code}/matches/${LEAGUE.match}/report`,
-                    body: { winner: state.players[gameWins(0) > gameWins(1) ? 0 : 1].name, games: state.games,
-                            admin_key: LEAGUE.adminKey || undefined, token: LEAGUE.token || undefined },
-                } : {
-                    url: '{{ url_for("save_match") }}',
-                    body: { 선수A: state.players[0].name, 선수B: state.players[1].name, 형식: state.target, 판수: state.bestOf, 게임: state.games },
-                };
-                const response = await fetch(request.url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(request.body),
-                });
-                const data = await response.json();
-                if (!response.ok) throw new Error(data.error || '저장에 실패했습니다.');
+                let data;
+                if (LEAGUE) data = await sendLeagueResult(true);
+                else {
+                    const response = await fetch('{{ url_for("save_match") }}', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ 선수A: state.players[0].name, 선수B: state.players[1].name, 형식: state.target, 판수: state.bestOf, 게임: state.games }),
+                    });
+                    data = await response.json();
+                    if (!response.ok) throw new Error(data.error || '저장에 실패했습니다.');
+                }
                 if (LEAGUE) {
                     $('result-message').innerHTML = `${data.confirmed ? '토너먼트 대진표에 반영했습니다.' : '결과를 보냈습니다. 운영진이 확인하면 대진표에 반영됩니다.'} <a href="${LEAGUE.backUrl}" class="underline">대진표로 돌아가기</a>`;
                 } else {

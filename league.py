@@ -342,7 +342,7 @@ def refresh_derived(state):
             # 대진을 다시 짜거나 앞 경기를 되돌려 선수가 바뀌면 예전 보고는 숨는다.
             usable = (report and match["status"] == "pending" and report.get("winner") in match["players"]
                       and report.get("players", match["players"]) == match["players"])
-            match["report"] = {k: report.get(k) for k in ("winner", "games", "by", "at")} if usable else None
+            match["report"] = {k: report.get(k) for k in ("winner", "games", "by", "at", "record")} if usable else None
         if prelim:
             for pool in prelim["pools"]:
                 describe_pool(bracket, pool)
@@ -1875,6 +1875,7 @@ def api_start(code):
 @league_bp.route("/api/league/<code>/matches/<match_id>/report", methods=["POST"])
 def api_report(code, match_id):
     # 선수(참가 토큰) 또는 점수판이 결과를 보고한다. 운영 키가 함께 오면 바로 확정한다.
+    # record가 false면(점수판 결과 상자의 X) 대진표에만 반영하고 전적(경기기록)에는 남기지 않는다 — 선수 보고면 확정할 때까지 이어진다.
     state = load_state(code, force=True)
     if state["status"] != "running":
         raise LeagueError("진행 중인 토너먼트가 아닙니다.")
@@ -1891,9 +1892,10 @@ def api_report(code, match_id):
     if winner_index is not None and match["players"][winner_index] != winner:
         raise LeagueError("게임 점수와 승자가 맞지 않습니다.")
 
+    record = data.get("record") is not False
     admin_key = request.headers.get("X-League-Key") or data.get("admin_key") or ""
     if admin_key and secrets.compare_digest(admin_key, state["admin_key"]):
-        return _confirm_and_record(state, match, winner, data.get("games"))
+        return _confirm_and_record(state, match, winner, data.get("games"), record)
 
     token = str(data.get("token", ""))
     reporter = next((n for n, t in state["_tokens"].items() if t and secrets.compare_digest(t, token)), None)
@@ -1905,6 +1907,8 @@ def api_report(code, match_id):
     _check_write_limit()
     # 보고에 그때의 대진(두 선수)을 함께 남겨, 나중에 대진이 바뀌면 이 보고가 다른 경기에 붙지 않게 한다
     entry = {"match": match_id, "players": match["players"], "winner": winner, "games": data.get("games") or None, "by": reporter}
+    if not record:
+        entry["record"] = False
     at = append_logs(state, [("보고", entry)])
     state["_reports"][match_id] = {**entry, "at": at}
     refresh_derived(state)
@@ -1919,19 +1923,22 @@ def api_confirm(code, match_id):
         raise LeagueError("진행 중인 토너먼트가 아닙니다.")
     data = request.get_json(silent=True) or {}
     _, match = find_match(state, match_id)
-    # 승자를 따로 주지 않으면 선수가 보고한 결과대로 확정한다
-    winner = str(data.get("winner") or (match.get("report") or {}).get("winner") or "").strip()
-    games = data.get("games") if "games" in data else (match.get("report") or {}).get("games")
-    return _confirm_and_record(state, match, winner, games)
+    # 승자를 따로 주지 않으면 선수가 보고한 결과대로 확정한다 (보고가 '전적에 안 남김'이었으면 그대로)
+    report = match.get("report") or {}
+    winner = str(data.get("winner") or report.get("winner") or "").strip()
+    games = data.get("games") if "games" in data else report.get("games")
+    explicit = "winner" in data or "games" in data
+    record = (data.get("record") is not False) if explicit else (report.get("record") is not False)
+    return _confirm_and_record(state, match, winner, games, record)
 
 
-def _confirm_and_record(state, match, winner, games):
+def _confirm_and_record(state, match, winner, games, record=True):
     # 확정 기록에 그때의 두 선수를 남긴다. 되살릴 때 대진이 바뀌어 있으면 엉뚱한 경기에 적용하지 않고 건너뛴다.
     response = _run(state, new_op("confirm", match=match["id"], players=list(match["players"]), winner=winner, games=games),
                     confirmed=True)
     parsed = match["games"]
-    # 게임 점수까지 있으면 전적(경기기록)에도 남긴다
-    if parsed:
+    # 게임 점수까지 있으면 전적(경기기록)에도 남긴다 (점수판의 X로 보낸 결과는 남기지 않는다)
+    if parsed and record:
         a, b = match["players"]
         wins = [sum(1 for x, y in parsed if x > y), sum(1 for x, y in parsed if y > x)]
         target, best_of = state["format"]["target"], match["best_of"]
