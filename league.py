@@ -1961,8 +1961,13 @@ def api_reset(code, match_id):
 
 @league_bp.route("/api/league/<code>/delete", methods=["POST"])
 def api_delete(code):
+    # 운영진: 토너먼트를 지운다. 되돌릴 수 없으므로 운영 키에 더해 관리자 코드를 다시 넣어야 한다.
+    # (이미 경기기록에 남은 전적은 그대로 둔다 — 경기 기록 파일은 따로다)
     state = load_state(code, force=True)
     _require_admin(state)
+    admin_code = normalize_code((request.get_json(silent=True) or {}).get("admin_code", ""))
+    if len(admin_code) != 6 or not secrets.compare_digest(admin_code, state.get("admin_code", "")):
+        raise LeagueError("관리자 코드가 맞지 않습니다. 운영 화면 위쪽이나 '탁우회 토너먼트' 시트의 '토너먼트' 탭에서 확인해 주세요.", 403)
     _check_write_limit()
     delete_tournament(state)
     return jsonify({"deleted": True})
