@@ -162,7 +162,12 @@
 
     <!-- ================= 결과 ================= -->
     <div id="result" hidden class="absolute inset-0 z-40 flex items-center justify-center bg-zinc-900/60 p-4 backdrop-blur-sm">
-        <div class="w-full max-w-sm rounded-2xl border border-zinc-200 bg-white p-6 text-center shadow-xl dark:border-zinc-800 dark:bg-zinc-900">
+        <div class="relative w-full max-w-sm rounded-2xl border border-zinc-200 bg-white p-6 text-center shadow-xl dark:border-zinc-800 dark:bg-zinc-900">
+            <!-- 토너먼트 경기: 결과를 보내지 않고도 바로 대진표로 돌아간다 -->
+            <a id="result-close" hidden href="#" aria-label="대진표로 돌아가기" title="대진표로 돌아가기"
+               class="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200">
+                <i data-lucide="x" class="h-5 w-5"></i>
+            </a>
             <p class="text-xs font-semibold text-zinc-500 dark:text-zinc-400">경기 종료</p>
             <p id="result-winner" class="mt-1 text-2xl font-extrabold"></p>
             <p id="result-score" class="mt-1 text-sm font-semibold text-red-600 dark:text-red-400"></p>
@@ -539,6 +544,8 @@
         syncSetup();
     }
     if (LEAGUE) {
+        $('result-close').href = LEAGUE.backUrl;
+        $('result-close').hidden = false;
         const hideBusy = Busy.show('토너먼트 경기를 불러오는 중입니다', { delay: 200 });
         loadLeagueMatch().catch((e) => showToast(e.message)).finally(hideBusy);
     }

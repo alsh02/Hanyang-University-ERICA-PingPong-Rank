@@ -88,7 +88,6 @@
         <div id="bracket-add-host"></div>
         <p class="mt-4 text-center text-xs text-zinc-400 dark:text-zinc-500">화면은 몇 초마다 자동으로 새로 고쳐집니다.</p>
     </section>
-    <p id="admin-hint" hidden class="mt-6 text-center text-xs text-zinc-400 dark:text-zinc-500">운영진이라면 <a href="{{ url_for('league.league_admin', code=code) }}" class="underline underline-offset-2 hover:text-red-600 dark:hover:text-red-400">관리자 코드로 운영 화면 열기</a></p>
 
     <!-- 참가 QR: 폰 카메라로 찍으면 코드가 채워진 참가 화면이 열린다. 어두운 화면에서도 인식되게 QR은 늘 흰 바탕. -->
     <div id="qr-panel" hidden class="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/60 p-4">
@@ -355,7 +354,6 @@
         $('admin-code-line').hidden = !(canAdmin && adminCode);
         if (canAdmin && adminCode) $('admin-code').textContent = adminCode;
         $('admin-login').hidden = !(isAdmin && !adminKey);
-        $('admin-hint').hidden = isAdmin || isViewer || open;
         if (isAdmin && !adminKey) showNotice('이 기기에는 운영 권한이 없습니다. 관리자 코드를 넣어 주세요. 코드는 개설한 운영진 화면 상단에 있고, 잃어버렸으면 \'탁우회 토너먼트\' 구글 시트의 \'토너먼트\' 탭에서 볼 수 있습니다.');
         else showNotice('');
 
