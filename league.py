@@ -2017,12 +2017,13 @@ def api_confirm(code, match_id):
     data = request.get_json(silent=True) or {}
     _, match = find_match(state, match_id)
     # 승자를 따로 주지 않으면 선수가 보고한 결과대로 확정한다 (보고가 '전적에 안 남김'이었으면 그대로)
+    # 운영진이 결과를 직접 주면(다르게 입력) 그 값만 쓰고, 보고의 게임 점수·세트 스코어는 섞지 않는다
     report = match.get("report") or {}
-    winner = str(data.get("winner") or report.get("winner") or "").strip()
-    games = data.get("games") if "games" in data else report.get("games")
-    sets = data.get("sets") if "sets" in data else report.get("sets")
     explicit = "winner" in data or "games" in data or "sets" in data
-    record = (data.get("record") is not False) if explicit else (report.get("record") is not False)
+    source = data if explicit else report
+    winner = str(source.get("winner") or "").strip()
+    games, sets = source.get("games"), source.get("sets")
+    record = source.get("record") is not False
     return _confirm_and_record(state, match, winner, games, record, sets)
 
 
