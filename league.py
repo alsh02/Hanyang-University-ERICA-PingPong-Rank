@@ -388,7 +388,7 @@ def refresh_derived(state):
             # 대진을 다시 짜거나 앞 경기를 되돌려 선수가 바뀌면 예전 보고는 숨는다.
             usable = (report and match["status"] == "pending" and report.get("winner") in match["players"]
                       and report.get("players", match["players"]) == match["players"])
-            match["report"] = {k: report.get(k) for k in ("winner", "games", "by", "at", "record")} if usable else None
+            match["report"] = {k: report.get(k) for k in ("winner", "games", "sets", "by", "at", "record")} if usable else None
         if prelim:
             for pool in prelim["pools"]:
                 describe_pool(bracket, pool)
@@ -866,7 +866,28 @@ def validate_games(games, target, best_of):
     return None, parsed, 0 if wins[0] > wins[1] else 1
 
 
-def confirm_match(state, match_id, winner, games=None):
+def validate_sets(sets, best_of):
+    # 세트 스코어만 넣은 결과(게임마다의 점수 없이 [대진 앞 선수, 뒤 선수]가 이긴 게임 수) 검증: (오류, [a, b], 승자 인덱스)
+    if sets in (None, "", []):
+        return None, None, None
+    try:
+        a, b = (int(x) for x in sets)
+    except (TypeError, ValueError):
+        return "세트 스코어 형식이 올바르지 않습니다.", None, None
+    needed = best_of // 2 + 1
+    if not 0 <= min(a, b) < max(a, b) == needed:
+        return f"{best_of}판 {needed}선의 세트 스코어가 아닙니다. ({a}:{b})", None, None
+    return None, [a, b], 0 if a > b else 1
+
+
+def set_counts(m):
+    # 경기의 세트 스코어(대진 순서): 게임 점수가 있으면 거기서 세고, 없으면 세트 스코어만 넣은 값. 둘 다 없으면 None
+    if m.get("games"):
+        return [sum(1 for a, b in m["games"] if a > b), sum(1 for a, b in m["games"] if b > a)]
+    return m.get("sets")
+
+
+def confirm_match(state, match_id, winner, games=None, sets=None):
     bracket, match = find_match(state, match_id)
     if match["status"] == "confirmed":
         raise LeagueError("이미 확정된 경기입니다. 되돌린 뒤 다시 확정하세요.")
@@ -879,8 +900,17 @@ def confirm_match(state, match_id, winner, games=None):
         raise LeagueError(error)
     if parsed is not None and match["players"][winner_index] != winner:
         raise LeagueError("게임 점수와 승자가 맞지 않습니다.")
+    # 게임 점수가 없으면 세트 스코어만으로도 된다 (예선 순위의 게임 비율은 세트 스코어로 가린다)
+    set_score = None
+    if parsed is None:
+        error, set_score, winner_index = validate_sets(sets, match["best_of"])
+        if error:
+            raise LeagueError(error)
+        if set_score is not None and match["players"][winner_index] != winner:
+            raise LeagueError("세트 스코어와 승자가 맞지 않습니다.")
 
     match["games"] = parsed
+    match["sets"] = set_counts({"games": parsed}) if parsed else set_score
     match["report"] = None
     if match.get("prelim"):
         # 예선 경기: 조의 경기가 모두 끝나 순위가 정해지면 1·2위가 본선 자리에 들어간다
@@ -901,7 +931,7 @@ def reset_match(state, match_id):
         pool = next(p for p in bracket["prelim"]["pools"] if p["label"] == match["pool"])
         if any(_unseat_blocked(bracket, seat) for seat in pool_seats(pool)):
             raise LeagueError("이 조에서 오른 선수의 본선 경기가 이미 끝나 되돌릴 수 없습니다. 본선 경기부터 되돌리세요.")
-        match.update({"winner": None, "games": None, "status": "pending"})
+        match.update({"winner": None, "games": None, "sets": None, "status": "pending"})
         pool["order"] = None   # 결과가 바뀌면 운영진이 정한 동률 순서도 다시 정한다
         sync_pools(bracket)
         refresh_status(state)
@@ -922,7 +952,7 @@ def reset_match(state, match_id):
         _retract(bracket, by_id, match)
     else:
         bracket["champion"] = None
-    match.update({"winner": None, "games": None, "status": "pending"})
+    match.update({"winner": None, "games": None, "sets": None, "status": "pending"})
     sync_third(bracket)
     refresh_status(state)
     return match
@@ -1020,32 +1050,40 @@ def pool_ranking(pool, matches):
             return [group]
         among = [m for m in ms if m["players"][0] in group and m["players"][1] in group]
 
-        def total(n, part):   # part: 0 이긴 게임, 1 진 게임, 2 딴 점수, 3 잃은 점수
-            result = 0
+        def games(n, won):   # 그 사람끼리의 경기에서 이긴(진) 게임 수 — 세트 스코어만 넣은 경기도 센다
+            total = 0
             for m in among:
-                if n not in m["players"]:
-                    continue
-                mine = 0 if m["players"][0] == n else 1
-                for g in m["games"]:
-                    own, other = g[mine], g[1 - mine]
-                    result += ((own > other), (own < other), own, other)[part]
-            return result
+                if n in m["players"]:
+                    i = m["players"].index(n)
+                    total += set_counts(m)[i if won else 1 - i]
+            return total
+
+        def points(n, won):   # 딴(잃은) 점수 — 게임마다의 점수가 있어야 한다
+            total = 0
+            for m in among:
+                if n in m["players"]:
+                    i = m["players"].index(n)
+                    total += sum(g[i if won else 1 - i] for g in m["games"])
+            return total
 
         steps = [lambda n: sum(1 for m in among if m["winner"] == n)]
-        if all(m.get("games") for m in among):
-            steps += [lambda n: _ratio(total(n, 0), total(n, 1)), lambda n: _ratio(total(n, 2), total(n, 3))]
+        if all(set_counts(m) for m in among):
+            steps.append(lambda n: _ratio(games(n, True), games(n, False)))
+            if all(m.get("games") for m in among):
+                steps.append(lambda n: _ratio(points(n, True), points(n, False)))
         for step in steps:
             tiers = split(group, step)
             if len(tiers) > 1:
                 return [t for tier in tiers for t in resolve(tier)]
-        reasons.append("equal" if len(steps) == 3 else "no_games")
+        # 못 가린 까닭: 끝까지 같음 · 점수 없이 세트 스코어만 있음 · 세트 스코어도 없이 승자만 있음
+        reasons.append(("no_games", "no_points", "equal")[len(steps) - 1])
         return [group]
 
     tiers = resolve(list(pool["players"]))
     order = pool.get("order") or []
     if order and all(n in order for n in pool["players"]):
         tiers = [[n] for tier in tiers for n in sorted(tier, key=order.index)]
-    return tiers, ("no_games" if "no_games" in reasons else reasons[0] if reasons else None)
+    return tiers, next((r for r in ("no_games", "no_points", "equal") if r in reasons), None)
 
 
 def pool_result(pool, matches):
@@ -1065,14 +1103,16 @@ def pool_table(pool, matches):
     for m in matches:
         if m["pool"] != pool["label"] or m["status"] != "confirmed":
             continue
+        sets = set_counts(m)
         for i, n in enumerate(m["players"]):
             row = rows[n]
             row["wins" if m["winner"] == n else "losses"] += 1
+            if sets:
+                row["games_won"] += sets[i]
+                row["games_lost"] += sets[1 - i]
             for g in m.get("games") or []:
-                own, other = g[i], g[1 - i]
-                row["games_won" if own > other else "games_lost"] += 1
-                row["points_won"] += own
-                row["points_lost"] += other
+                row["points_won"] += g[i]
+                row["points_lost"] += g[1 - i]
     return list(rows.values())
 
 
@@ -1431,7 +1471,7 @@ def apply_op(state, op):
         _, match = find_match(state, op.get("match"))
         if op.get("players") and match["players"] != op["players"]:
             raise LeagueError("그사이 대진이 바뀌어 이 결과를 반영할 수 없습니다.")
-        confirm_match(state, op["match"], op.get("winner"), op.get("games"))
+        confirm_match(state, op["match"], op.get("winner"), op.get("games"), op.get("sets"))
     elif kind == "reset":
         reset_match(state, op.get("match"))
     elif kind == "pool_move":
@@ -1932,16 +1972,23 @@ def api_report(code, match_id):
     winner = str(data.get("winner", "")).strip()
     if winner not in match["players"]:
         raise LeagueError("승자는 이 경기의 두 선수 중 하나여야 합니다.")
-    error, _, winner_index = validate_games(data.get("games"), state["format"]["target"], match["best_of"])
+    error, games, winner_index = validate_games(data.get("games"), state["format"]["target"], match["best_of"])
     if error:
         raise LeagueError(error)
     if winner_index is not None and match["players"][winner_index] != winner:
         raise LeagueError("게임 점수와 승자가 맞지 않습니다.")
+    sets = None
+    if games is None:
+        error, sets, winner_index = validate_sets(data.get("sets"), match["best_of"])
+        if error:
+            raise LeagueError(error)
+        if winner_index is not None and match["players"][winner_index] != winner:
+            raise LeagueError("세트 스코어와 승자가 맞지 않습니다.")
 
     record = data.get("record") is not False
     admin_key = request.headers.get("X-League-Key") or data.get("admin_key") or ""
     if admin_key and secrets.compare_digest(admin_key, state["admin_key"]):
-        return _confirm_and_record(state, match, winner, data.get("games"), record)
+        return _confirm_and_record(state, match, winner, data.get("games"), record, sets)
 
     token = str(data.get("token", ""))
     reporter = next((n for n, t in state["_tokens"].items() if t and secrets.compare_digest(t, token)), None)
@@ -1952,7 +1999,7 @@ def api_report(code, match_id):
         raise LeagueError("이 경기의 선수만 결과를 보낼 수 있습니다.", 403)
     _check_write_limit()
     # 보고에 그때의 대진(두 선수)을 함께 남겨, 나중에 대진이 바뀌면 이 보고가 다른 경기에 붙지 않게 한다
-    entry = {"match": match_id, "players": match["players"], "winner": winner, "games": data.get("games") or None, "by": reporter}
+    entry = {"match": match_id, "players": match["players"], "winner": winner, "games": data.get("games") or None, "sets": sets, "by": reporter}
     if not record:
         entry["record"] = False
     at = append_logs(state, [("보고", entry)])
@@ -1973,14 +2020,15 @@ def api_confirm(code, match_id):
     report = match.get("report") or {}
     winner = str(data.get("winner") or report.get("winner") or "").strip()
     games = data.get("games") if "games" in data else report.get("games")
-    explicit = "winner" in data or "games" in data
+    sets = data.get("sets") if "sets" in data else report.get("sets")
+    explicit = "winner" in data or "games" in data or "sets" in data
     record = (data.get("record") is not False) if explicit else (report.get("record") is not False)
-    return _confirm_and_record(state, match, winner, games, record)
+    return _confirm_and_record(state, match, winner, games, record, sets)
 
 
-def _confirm_and_record(state, match, winner, games, record=True):
+def _confirm_and_record(state, match, winner, games, record=True, sets=None):
     # 확정 기록에 그때의 두 선수를 남긴다. 되살릴 때 대진이 바뀌어 있으면 엉뚱한 경기에 적용하지 않고 건너뛴다.
-    response = _run(state, new_op("confirm", match=match["id"], players=list(match["players"]), winner=winner, games=games),
+    response = _run(state, new_op("confirm", match=match["id"], players=list(match["players"]), winner=winner, games=games, sets=sets),
                     confirmed=True)
     parsed = match["games"]
     # 게임 점수까지 있으면 전적(경기기록)에도 남긴다 (점수판의 X로 보낸 결과는 남기지 않는다)

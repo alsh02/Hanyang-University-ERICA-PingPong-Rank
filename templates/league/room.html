@@ -128,9 +128,12 @@
             <p id="result-title" class="text-xs font-semibold text-zinc-500 dark:text-zinc-400"></p>
             <p class="mb-3 text-base font-bold">승자를 고르세요</p>
             <div id="result-winners" class="grid grid-cols-2 gap-2"></div>
+            <!-- 세트 스코어만 넣어도 된다 (예선 순위의 게임 비율은 이것으로 가린다). 게임마다의 점수는 선택. -->
+            <p class="mb-1.5 mt-4 text-xs font-semibold text-zinc-500 dark:text-zinc-400">세트 스코어 <span class="font-medium text-zinc-400 dark:text-zinc-500">· 승자 기준</span></p>
+            <div id="result-sets" class="grid gap-2"></div>
             <label class="mt-4 block">
                 <span id="result-games-label" class="mb-1.5 block text-xs font-semibold text-zinc-500 dark:text-zinc-400">게임 점수 (선택) · 예: 11:7, 9:11, 11:8</span>
-                <input id="result-games" type="text" inputmode="numeric" placeholder="비워 두면 승자만 기록합니다" autocomplete="off"
+                <input id="result-games" type="text" inputmode="numeric" placeholder="세트 스코어만 넣어도 됩니다" autocomplete="off"
                        class="h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-900 placeholder-zinc-400 focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/30 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:placeholder-zinc-500">
             </label>
             <p id="result-error" hidden class="mt-2 text-sm font-semibold text-amber-600 dark:text-amber-400"></p>
@@ -276,6 +279,9 @@
     const allMatches = (b) => b.matches.concat(b.third ? [b.third] : [], b.prelim ? b.prelim.matches : []);
     const seatText = (seat) => { const [pool, rank] = seat.split(':'); return `${pool}조 ${rank}위`; };
     const poolOf = (b, name) => (b && b.prelim ? b.prelim.pools.find((p) => p.players.includes(name)) : null);
+    // 경기(또는 보고)의 세트 스코어(대진 순서): 게임 점수가 있으면 거기서 세고, 없으면 세트 스코어만 넣은 값
+    const setsOf = (m) => (m.games ? [0, 1].map((i) => m.games.filter(([a, c]) => (i === 0 ? a > c : c > a)).length) : m.sets || null);
+    const resultText = (r) => (r.games ? r.games.map(([a, c]) => `${a}:${c}`).join(', ') : r.sets ? `세트 ${r.sets[0]}:${r.sets[1]}` : '');
     const groupOf = (name) => (tournament.participants.find((p) => p.name === name) || {}).group;
     const divisionOf = (name) => (tournament.participants.find((p) => p.name === name) || {}).division || '';
     const button = (label, attrs, style = 'ghost') => {
@@ -295,7 +301,7 @@
     const stageOf = (groupKey, m) => m.prelim ? `예선 ${m.pool}조` : m.third ? '3·4위전' : tournament.brackets[groupKey].labels[m.round];
     const pendingReports = (t) => Object.entries(t.brackets || {}).flatMap(([k, b]) =>
         allMatches(b).filter((m) => m.status === 'pending' && m.report).map((m) => ({ group: k, m })));
-    const reportKey = (m) => `${m.id}|${m.report.at}|${m.report.winner}|${JSON.stringify(m.report.games)}`;
+    const reportKey = (m) => `${m.id}|${m.report.at}|${m.report.winner}|${JSON.stringify(m.report.games)}|${JSON.stringify(m.report.sets)}`;
 
     function beep() {
         if (!soundOn) return;
@@ -342,7 +348,7 @@
                 <li class="flex flex-wrap items-center justify-between gap-2 py-2">
                     <span class="min-w-0 text-sm">
                         <span class="text-xs font-semibold text-zinc-500 dark:text-zinc-400">${escapeHtml(groupName(group))} ${escapeHtml(stageOf(group, m))}</span><br>
-                        <strong>${escapeHtml(m.report.by)}</strong> 보고 · 승자 <strong class="text-red-600 dark:text-red-400">${escapeHtml(m.report.winner)}</strong>${m.report.games ? ` <span class="tabular-nums text-zinc-500">(${m.report.games.map(([a, c]) => `${a}:${c}`).join(', ')})</span>` : ''}
+                        <strong>${escapeHtml(m.report.by)}</strong> 보고 · 승자 <strong class="text-red-600 dark:text-red-400">${escapeHtml(m.report.winner)}</strong>${resultText(m.report) ? ` <span class="tabular-nums text-zinc-500">(${resultText(m.report)})</span>` : ''}
                         <span class="ml-1 text-xs text-zinc-400">${escapeHtml((m.report.at || '').slice(11, 16))}</span>
                     </span>
                     <span class="flex flex-shrink-0 gap-1.5">${button('보고대로 확정', `data-confirm-report="${m.id}"`, 'primary')}${button('다르게 입력', `data-confirm="${m.id}"`)}</span>
@@ -732,7 +738,7 @@
         const games = m.games ? m.games.map(([a, c]) => `${a}:${c}`).join(', ') : '';
         const row = (name, i) => {
             const isWinner = m.winner && name === m.winner;
-            const wins = m.games ? m.games.filter(([a, c]) => (i === 0 ? a > c : c > a)).length : null;
+            const sets = setsOf(m), wins = sets ? sets[i] : null;
             return `<div class="flex h-8 items-center justify-between gap-2 px-2.5 ${i ? 'border-t border-zinc-100 dark:border-zinc-800' : ''}">
                 <span class="flex min-w-0 items-baseline gap-1.5">
                     <span data-name class="truncate text-sm ${isWinner ? 'font-extrabold text-red-600 dark:text-red-400' : name ? 'font-semibold' : 'font-medium text-zinc-400 dark:text-zinc-500'} ${me && name === me.name ? 'underline decoration-red-300 decoration-2 underline-offset-2' : ''}">${escapeHtml(name || slotLabel(b, m, i) || '미정')}</span>
@@ -746,7 +752,7 @@
         while (nextReal && nextReal.bye) nextReal = nextReal.next ? byId[nextReal.next] : null;
         const canReset = m.status === 'confirmed' && (m.third || !nextReal || nextReal.status !== 'confirmed');
         // 보고 줄은 한 줄로 (두 줄로 늘면 옆 카드와 겹친다). 게임 점수는 눌러 보면(title) 나오고, 확인 대기 패널과 결과 입력 창에도 있다.
-        const reportFull = m.report ? `${m.report.by} 보고 · 승자 ${m.report.winner}${m.report.games ? ` (${m.report.games.map(([a, c]) => `${a}:${c}`).join(', ')})` : ''}` : '';
+        const reportFull = m.report ? `${m.report.by} 보고 · 승자 ${m.report.winner}${resultText(m.report) ? ` (${resultText(m.report)})` : ''}` : '';
         const report = m.report && m.status === 'pending'
             ? `<p title="${escapeHtml(reportFull)}" class="truncate border-t border-zinc-100 px-2.5 py-1 text-[11px] leading-4 text-amber-700 dark:border-zinc-800 dark:text-amber-300"><strong>${escapeHtml(m.report.by)}</strong> 보고 · 승자 ${escapeHtml(m.report.winner)}</p>` : '';
         return `<article data-match="${m.id}" class="overflow-hidden rounded-xl border bg-white shadow-sm dark:bg-zinc-900 ${m.status === 'pending' && !drafting ? 'border-red-300 dark:border-red-500/40' : 'border-zinc-200 dark:border-zinc-800'}">
@@ -848,7 +854,10 @@
         else if (done) note = `본선 진출 · ${pool.ranking.slice(0, 2).map((n, i) => `${i + 1}위 ${n}`).join(' · ')}`;
         let tie = '';
         if (!drafting && pool.state === 'tie') {
-            const why = pool.tie_reason === 'no_games' ? '게임 점수 없이 승자만 넣은 경기가 있어 동률을 가릴 수 없습니다.' : '승수와 게임·점수 비율까지 같아 규정으로 가릴 수 없습니다.';
+            const why = {
+                no_games: '세트 스코어 없이 승자만 넣은 경기가 있어 동률을 가릴 수 없습니다.',
+                no_points: '세트 비율이 같고, 게임 점수 없이 세트 스코어만 넣은 경기가 있어 점수 비율로 가릴 수 없습니다.',
+            }[pool.tie_reason] || '승수와 게임·점수 비율까지 같아 규정으로 가릴 수 없습니다.';
             tie = `<div class="mx-4 mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
                 <p class="break-keep">${escapeHtml(pool.tied.map((g) => g.join('·')).join(', '))} 동률 · ${why}</p>
                 ${canAdmin ? `<div class="mt-1.5">${button('순위 정하기', `data-pool-order="${escapeHtml(pool.label)}"`, 'primary')}</div>` : '<p class="mt-0.5">운영진이 순위를 정합니다.</p>'}
@@ -862,7 +871,7 @@
     }
     function renderPoolMatch(m) {
         const drafting = tournament.status === 'draft';
-        const wins = m.games ? [0, 1].map((i) => m.games.filter(([a, c]) => (i === 0 ? a > c : c > a)).length) : null;
+        const wins = setsOf(m);
         const side = (i) => {
             const name = m.players[i];
             const tone = m.winner === name ? 'font-extrabold text-red-600 dark:text-red-400' : m.winner ? 'font-medium text-zinc-400 dark:text-zinc-500' : 'font-semibold';
@@ -872,7 +881,7 @@
             : m.status === 'confirmed' ? (wins ? `<span class="text-sm font-extrabold tabular-nums">${wins[0]} : ${wins[1]}</span>` : '<span class="text-[11px] font-semibold text-zinc-400">확정</span>')
             : '<span class="whitespace-nowrap text-[11px] font-semibold text-red-600 dark:text-red-400">경기 가능</span>';
         const games = m.games ? `<p class="-mt-1 pb-1.5 text-center text-[11px] tabular-nums text-zinc-400 dark:text-zinc-500">${m.games.map(([a, c]) => `${a}:${c}`).join(', ')}</p>` : '';
-        const reportFull = m.report ? `${m.report.by} 보고 · 승자 ${m.report.winner}${m.report.games ? ` (${m.report.games.map(([a, c]) => `${a}:${c}`).join(', ')})` : ''}` : '';
+        const reportFull = m.report ? `${m.report.by} 보고 · 승자 ${m.report.winner}${resultText(m.report) ? ` (${resultText(m.report)})` : ''}` : '';
         const report = m.report && m.status === 'pending'
             ? `<p title="${escapeHtml(reportFull)}" class="truncate px-3 pb-1.5 text-center text-[11px] leading-4 text-amber-700 dark:text-amber-300"><strong>${escapeHtml(m.report.by)}</strong> 보고 · 승자 ${escapeHtml(m.report.winner)}</p>` : '';
         return `<div data-match="${m.id}" class="border-t border-zinc-100 dark:border-zinc-800">
@@ -1082,6 +1091,14 @@
         $('result-games').value = match.report && match.report.games ? match.report.games.map(([a, c]) => `${a}:${c}`).join(', ') : '';
         $('result-games-label').textContent = `게임 점수 (선택) · ${match.players[0]} : ${match.players[1]} 순서로, 예: 11:7, 9:11, 11:8`;
         if (match.report) $('result-winners').querySelector(`[data-winner="${CSS.escape(match.report.winner)}"]`)?.setAttribute('aria-current', 'true');
+        // 세트 스코어 버튼(승자 기준): 3판 2선이면 2:0 · 2:1, 5판 3선이면 3:0 · 3:1 · 3:2. 보고가 있으면 그 스코어를 골라 둔다.
+        const need = Math.floor(match.best_of / 2) + 1;
+        const options = Array.from({ length: need }, (_, lost) => `${need}:${lost}`);
+        const reported = match.report && setsOf(match.report);
+        const picked = reported ? `${Math.max(...reported)}:${Math.min(...reported)}` : '';
+        $('result-sets').className = `grid gap-2 ${options.length === 3 ? 'grid-cols-3' : 'grid-cols-2'}`;
+        $('result-sets').innerHTML = options.map((o) => `<button type="button" data-set="${o}" aria-current="${o === picked}"
+            class="h-10 rounded-xl border border-zinc-200 text-sm font-bold tabular-nums text-zinc-700 transition-colors aria-[current=true]:border-red-600 aria-[current=true]:bg-red-600 aria-[current=true]:text-white dark:border-zinc-700 dark:text-zinc-300 dark:aria-[current=true]:border-red-500 dark:aria-[current=true]:bg-rubber">${o}</button>`).join('');
         $('result-error').hidden = true;
         $('result-submit').textContent = mode === 'confirm' ? '확정' : '보내기';
         $('result-panel').hidden = false;
@@ -1096,6 +1113,13 @@
         $('result-winners').querySelectorAll('[data-winner]').forEach((el) => el.setAttribute('aria-current', 'false'));
         b.setAttribute('aria-current', 'true');
     });
+    // 세트 스코어는 다시 누르면 고른 것을 푼다 (승자만 넣고 싶을 때)
+    $('result-sets').addEventListener('click', (e) => {
+        const b = e.target.closest('[data-set]'); if (!b) return;
+        const on = b.getAttribute('aria-current') !== 'true';
+        $('result-sets').querySelectorAll('[data-set]').forEach((el) => el.setAttribute('aria-current', 'false'));
+        b.setAttribute('aria-current', String(on));
+    });
     $('result-cancel').addEventListener('click', () => { $('result-panel').hidden = true; });
     $('result-panel').addEventListener('click', (e) => { if (e.target === $('result-panel')) $('result-panel').hidden = true; });
     $('result-form').addEventListener('submit', async (e) => {
@@ -1106,8 +1130,12 @@
             if (!winner) throw new Error('승자를 골라 주세요.');
             const games = parseGames($('result-games').value);
             const { match, mode } = pendingAction;
+            // 게임 점수를 넣었으면 그것으로(세트 스코어는 서버가 센다), 아니면 고른 세트 스코어를 대진 순서로 바꿔 보낸다
+            const pick = $('result-sets').querySelector('[aria-current="true"]')?.dataset.set;
+            let sets = null;
+            if (!games && pick) { const [won, lost] = pick.split(':').map(Number); sets = match.players[0] === winner ? [won, lost] : [lost, won]; }
             $('result-submit').disabled = true;
-            const body = mode === 'confirm' ? { winner, games } : { winner, games, token: me && me.token };
+            const body = mode === 'confirm' ? { winner, games, sets } : { winner, games, sets, token: me && me.token };
             const hideBusy = Busy.show(mode === 'confirm' ? '결과를 확정하는 중입니다' : '결과를 보내는 중입니다');
             const data = await serial(() => api(`/matches/${match.id}/${mode}`, body)).finally(hideBusy);
             if (accept(data.tournament)) render();
