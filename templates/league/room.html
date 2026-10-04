@@ -124,22 +124,25 @@
 
     <!-- 결과 입력 패널 -->
     <div id="result-panel" hidden class="fixed inset-0 z-50 flex items-end justify-center bg-zinc-900/50 p-4 sm:items-center">
-        <form id="result-form" class="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-5 shadow-xl dark:border-zinc-800 dark:bg-zinc-900">
+        <!-- 결과는 '김도윤 2:1 승'처럼 승자와 세트 스코어를 한 번에 고른다(왼쪽 열은 대진 앞 선수, 오른쪽 열은 뒤 선수).
+             세트 스코어를 모르면 아래 '승자만'. 고른 것은 하나뿐이고, 저장될 결과를 확정 버튼 위에 문장으로 보여 준다.
+             처음 쓰는 사람 기준으로 시안 다섯 개(다시 누르면 해제 · '안 넣음' 버튼 · 드롭다운 · '지우기' 링크 · 한 번에)를 비교해 골랐다. -->
+        <form id="result-form" class="max-h-[92vh] w-full max-w-md overflow-y-auto rounded-2xl border border-zinc-200 bg-white p-5 shadow-xl dark:border-zinc-800 dark:bg-zinc-900">
             <p id="result-title" class="text-xs font-semibold text-zinc-500 dark:text-zinc-400"></p>
-            <p class="mb-3 text-base font-bold">승자를 고르세요</p>
+            <p class="mb-3 text-base font-bold">경기 결과를 고르세요</p>
+            <div id="result-options" class="grid grid-cols-2 gap-2"></div>
+            <p class="mb-1.5 mt-4 text-xs font-semibold text-zinc-500 dark:text-zinc-400">세트 스코어를 모르면 승자만</p>
             <div id="result-winners" class="grid grid-cols-2 gap-2"></div>
-            <!-- 세트 스코어만 넣어도 된다 (예선 순위의 게임 비율은 이것으로 가린다). 게임마다의 점수는 선택. -->
-            <p class="mb-1.5 mt-4 text-xs font-semibold text-zinc-500 dark:text-zinc-400">세트 스코어 <span class="font-medium text-zinc-400 dark:text-zinc-500">· 승자 기준</span></p>
-            <div id="result-sets" class="grid gap-2"></div>
             <label class="mt-4 block">
                 <span id="result-games-label" class="mb-1.5 block text-xs font-semibold text-zinc-500 dark:text-zinc-400">게임 점수 (선택) · 예: 11:7, 9:11, 11:8</span>
-                <input id="result-games" type="text" inputmode="numeric" placeholder="세트 스코어만 넣어도 됩니다" autocomplete="off"
+                <input id="result-games" type="text" inputmode="numeric" placeholder="비워 둬도 됩니다" autocomplete="off"
                        class="h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-900 placeholder-zinc-400 focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/30 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:placeholder-zinc-500">
             </label>
+            <p id="result-summary" class="mt-4 break-keep text-sm font-semibold text-zinc-500 dark:text-zinc-400"></p>
             <p id="result-error" hidden class="mt-2 text-sm font-semibold text-amber-600 dark:text-amber-400"></p>
-            <div class="mt-4 grid grid-cols-2 gap-2">
+            <div class="mt-3 grid grid-cols-2 gap-2">
                 <button type="button" id="result-cancel" class="h-11 rounded-xl border border-zinc-200 text-sm font-semibold text-zinc-700 dark:border-zinc-700 dark:text-zinc-300">취소</button>
-                <button type="submit" id="result-submit" class="h-11 rounded-xl bg-red-600 text-sm font-bold text-white transition-colors hover:bg-red-700 disabled:bg-zinc-300 dark:bg-rubber dark:hover:bg-red-500 dark:disabled:bg-zinc-800">보내기</button>
+                <button type="submit" id="result-submit" disabled class="h-11 rounded-xl bg-red-600 text-sm font-bold text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:bg-rubber dark:hover:bg-red-500 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500">보내기</button>
             </div>
         </form>
     </div>
@@ -1082,58 +1085,68 @@
     })();
 
     // ---------- 결과 입력 패널 ----------
+    // 결과 고르기: '김도윤 2:1 승' 같은 버튼(승자 + 승자 기준 세트 스코어)과 세트 스코어를 모를 때의 '승자만' 버튼 중 하나.
+    // 왼쪽 열은 대진 앞 선수, 오른쪽 열은 뒤 선수. 보고가 있으면 보고한 결과가 골라져 있다.
+    const PICK = 'rounded-xl border border-zinc-200 text-sm font-bold text-zinc-700 transition-colors aria-[current=true]:border-red-600 aria-[current=true]:bg-red-600 aria-[current=true]:text-white dark:border-zinc-700 dark:text-zinc-300 dark:aria-[current=true]:border-red-500 dark:aria-[current=true]:bg-rubber';
     function openResult(match, mode) {
         pendingAction = { match, mode };
         const key = match.id.split('-')[0];
         $('result-title').textContent = `${groupName(key)} ${stageOf(key, match)} · ${match.best_of}판 ${Math.floor(match.best_of / 2) + 1}선 · ${match.players.join(' vs ')}`;
-        $('result-winners').innerHTML = match.players.map((p) => `<button type="button" data-winner="${escapeHtml(p)}" aria-current="false"
-            class="h-12 rounded-xl border border-zinc-200 text-sm font-bold text-zinc-700 transition-colors aria-[current=true]:border-red-600 aria-[current=true]:bg-red-600 aria-[current=true]:text-white dark:border-zinc-700 dark:text-zinc-300 dark:aria-[current=true]:border-red-500 dark:aria-[current=true]:bg-rubber">${escapeHtml(p)}</button>`).join('');
+        const need = Math.floor(match.best_of / 2) + 1;
+        const scores = Array.from({ length: need }, (_, lost) => `${need}:${lost}`);   // 3판 2선 2:0 · 2:1, 5판 3선 3:0 · 3:1 · 3:2
+        $('result-options').innerHTML = scores.flatMap((sc) => match.players.map((p) => `<button type="button" data-pick data-winner="${escapeHtml(p)}" data-set="${sc}" aria-current="false"
+            class="h-11 px-2 ${PICK}"><span class="tabular-nums">${escapeHtml(p)} ${sc} 승</span></button>`)).join('');
+        $('result-winners').innerHTML = match.players.map((p) => `<button type="button" data-pick data-winner="${escapeHtml(p)}" data-set="" aria-current="false"
+            class="flex h-12 flex-col items-center justify-center leading-tight ${PICK}">${escapeHtml(p)} 승<span class="text-[11px] font-medium opacity-70">세트 스코어 없이</span></button>`).join('');
         $('result-games').value = match.report && match.report.games ? match.report.games.map(([a, c]) => `${a}:${c}`).join(', ') : '';
         $('result-games-label').textContent = `게임 점수 (선택) · ${match.players[0]} : ${match.players[1]} 순서로, 예: 11:7, 9:11, 11:8`;
-        if (match.report) $('result-winners').querySelector(`[data-winner="${CSS.escape(match.report.winner)}"]`)?.setAttribute('aria-current', 'true');
-        // 세트 스코어 버튼(승자 기준): 3판 2선이면 2:0 · 2:1, 5판 3선이면 3:0 · 3:1 · 3:2. 보고가 있으면 그 스코어를 골라 둔다.
-        const need = Math.floor(match.best_of / 2) + 1;
-        const options = Array.from({ length: need }, (_, lost) => `${need}:${lost}`);
-        const reported = match.report && setsOf(match.report);
-        const picked = reported ? `${Math.max(...reported)}:${Math.min(...reported)}` : '';
-        $('result-sets').className = `grid gap-2 ${options.length === 3 ? 'grid-cols-3' : 'grid-cols-2'}`;
-        $('result-sets').innerHTML = options.map((o) => `<button type="button" data-set="${o}" aria-current="${o === picked}"
-            class="h-10 rounded-xl border border-zinc-200 text-sm font-bold tabular-nums text-zinc-700 transition-colors aria-[current=true]:border-red-600 aria-[current=true]:bg-red-600 aria-[current=true]:text-white dark:border-zinc-700 dark:text-zinc-300 dark:aria-[current=true]:border-red-500 dark:aria-[current=true]:bg-rubber">${o}</button>`).join('');
+        if (match.report) {
+            const sets = setsOf(match.report);
+            const sc = sets ? `${Math.max(...sets)}:${Math.min(...sets)}` : '';
+            $('result-form').querySelector(`[data-pick][data-winner="${CSS.escape(match.report.winner)}"][data-set="${sc}"]`)?.setAttribute('aria-current', 'true');
+        }
         $('result-error').hidden = true;
         $('result-submit').textContent = mode === 'confirm' ? '확정' : '보내기';
+        syncResult();
         $('result-panel').hidden = false;
+    }
+    const pickedResult = () => $('result-form').querySelector('[data-pick][aria-current="true"]');
+    // 확정(보내기)은 결과를 고른 뒤에만 누를 수 있고, 저장될 결과를 문장으로 보여 준다
+    function syncResult() {
+        const pick = pickedResult(), { mode } = pendingAction || {};
+        const games = $('result-games').value.trim() ? ' · 게임 점수 함께' : '';
+        $('result-summary').textContent = pick
+            ? `${mode === 'confirm' ? '확정할' : '보낼'} 결과: ${pick.dataset.winner} ${pick.dataset.set ? `${pick.dataset.set} 승` : '승 (세트 스코어 없이)'}${games}`
+            : '위에서 경기 결과를 고르세요.';
+        $('result-summary').className = `mt-4 break-keep text-sm font-semibold ${pick ? 'text-zinc-900 dark:text-zinc-100' : 'text-zinc-400 dark:text-zinc-500'}`;
+        $('result-submit').disabled = !pick;
     }
     function parseGames(text) {
         const parts = text.split(/[,\s]+/).filter(Boolean);
         if (!parts.length) return null;
         return parts.map((p) => { const m = p.match(/^(\d+)\s*[:：-]\s*(\d+)$/); if (!m) throw new Error(`'${p}'은(는) 11:7 같은 형식이어야 합니다.`); return [Number(m[1]), Number(m[2])]; });
     }
-    $('result-winners').addEventListener('click', (e) => {
-        const b = e.target.closest('[data-winner]'); if (!b) return;
-        $('result-winners').querySelectorAll('[data-winner]').forEach((el) => el.setAttribute('aria-current', 'false'));
+    $('result-form').addEventListener('click', (e) => {
+        const b = e.target.closest('[data-pick]'); if (!b) return;
+        $('result-form').querySelectorAll('[data-pick]').forEach((el) => el.setAttribute('aria-current', 'false'));
         b.setAttribute('aria-current', 'true');
+        syncResult();
     });
-    // 세트 스코어는 다시 누르면 고른 것을 푼다 (승자만 넣고 싶을 때)
-    $('result-sets').addEventListener('click', (e) => {
-        const b = e.target.closest('[data-set]'); if (!b) return;
-        const on = b.getAttribute('aria-current') !== 'true';
-        $('result-sets').querySelectorAll('[data-set]').forEach((el) => el.setAttribute('aria-current', 'false'));
-        b.setAttribute('aria-current', String(on));
-    });
+    $('result-games').addEventListener('input', syncResult);
     $('result-cancel').addEventListener('click', () => { $('result-panel').hidden = true; });
     $('result-panel').addEventListener('click', (e) => { if (e.target === $('result-panel')) $('result-panel').hidden = true; });
     $('result-form').addEventListener('submit', async (e) => {
         e.preventDefault();
-        const winner = $('result-winners').querySelector('[aria-current="true"]')?.dataset.winner;
+        const pick = pickedResult();
         const error = $('result-error');
         try {
-            if (!winner) throw new Error('승자를 골라 주세요.');
+            if (!pick) throw new Error('경기 결과를 골라 주세요.');
+            const winner = pick.dataset.winner;
             const games = parseGames($('result-games').value);
             const { match, mode } = pendingAction;
             // 게임 점수를 넣었으면 그것으로(세트 스코어는 서버가 센다), 아니면 고른 세트 스코어를 대진 순서로 바꿔 보낸다
-            const pick = $('result-sets').querySelector('[aria-current="true"]')?.dataset.set;
             let sets = null;
-            if (!games && pick) { const [won, lost] = pick.split(':').map(Number); sets = match.players[0] === winner ? [won, lost] : [lost, won]; }
+            if (!games && pick.dataset.set) { const [won, lost] = pick.dataset.set.split(':').map(Number); sets = match.players[0] === winner ? [won, lost] : [lost, won]; }
             $('result-submit').disabled = true;
             const body = mode === 'confirm' ? { winner, games, sets } : { winner, games, sets, token: me && me.token };
             const hideBusy = Busy.show(mode === 'confirm' ? '결과를 확정하는 중입니다' : '결과를 보내는 중입니다');
@@ -1143,7 +1156,7 @@
             showToast(mode === 'confirm' ? '결과를 확정했습니다.' : '결과를 보냈습니다. 운영진이 확인하면 반영됩니다.');
         } catch (err) {
             error.textContent = err.message; error.hidden = false;
-        } finally { $('result-submit').disabled = false; }
+        } finally { syncResult(); }
     });
 
     // ---------- 예선 동률: 운영진이 순위를 정한다 ----------
