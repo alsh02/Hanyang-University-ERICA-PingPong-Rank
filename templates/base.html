@@ -199,6 +199,19 @@
             }
             return { show };
         })();
+
+        // 다른 화면으로 옮기는 링크에 data-busy="…하는 중입니다"를 달면, 누르는 순간 상자를 띄워 다음 화면이 뜰 때까지 둔다
+        // (서버가 화면을 만드는 동안 아무 반응이 없어 보이지 않게). 링크 자신의 처리기가 막은 누름(preventDefault)·새 탭 열기는 건드리지 않는다.
+        // 뒤로 가기로 이 화면이 저장된 채 돌아오면(bfcache) 그때 띄운 상자를 닫는다.
+        (() => {
+            let hide = null;
+            document.addEventListener('click', (e) => {
+                const a = e.target.closest('a[data-busy]');
+                if (!a || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || a.target === '_blank') return;
+                hide = Busy.show(a.dataset.busy);
+            });
+            window.addEventListener('pageshow', (e) => { if (e.persisted && hide) { hide(); hide = null; } });
+        })();
     </script>
 
     {% block scripts %}{% endblock %}

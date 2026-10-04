@@ -540,15 +540,18 @@
         const stage = match.prelim ? `예선 ${match.pool}조` : match.third ? '3·4위전' : bracket.labels[match.round];
         $('league-banner-text').textContent = `토너먼트 ${t.name} · ${group} ${stage} · 끝나면 결과가 대진표로 보내집니다`;
         $('league-banner-link').href = LEAGUE.backUrl;
+        $('league-banner-link').dataset.busy = '대진표를 여는 중입니다';
         $('league-banner').hidden = false;
         // 왼쪽 위 버튼은 메인이 아니라 대진표로
         homeLink.href = LEAGUE.backUrl;
+        homeLink.dataset.busy = '대진표를 여는 중입니다';
         homeLink.querySelector('span').textContent = '대진표로';
         if (match.status !== 'pending') showToast('이미 결과가 확정된 경기입니다.');
         syncSetup();
     }
     if (LEAGUE) {
         $('result-close').href = LEAGUE.backUrl;
+        $('result-close').dataset.busy = '대진표를 여는 중입니다';   // 이미 보낸 뒤의 X는 그냥 링크라 이 상자가 뜬다 (안 보낸 결과가 있으면 X 처리기가 따로 띄운다)
         $('result-close').hidden = false;
         const hideBusy = Busy.show('토너먼트 경기를 불러오는 중입니다', { delay: 200 });
         loadLeagueMatch().catch((e) => showToast(e.message)).finally(hideBusy);
@@ -623,7 +626,7 @@
                 const message = $('result-message');
                 message.textContent = `${error.message} `;
                 const back = document.createElement('a');
-                back.href = LEAGUE.backUrl; back.className = 'underline'; back.textContent = '보내지 않고 대진표로';
+                back.href = LEAGUE.backUrl; back.className = 'underline'; back.textContent = '보내지 않고 대진표로'; back.dataset.busy = '대진표를 여는 중입니다';
                 message.appendChild(back);
                 message.className = 'mt-3 text-xs font-semibold text-amber-600 dark:text-amber-400';
             }
@@ -651,7 +654,7 @@
                     if (!response.ok) throw new Error(data.error || '저장에 실패했습니다.');
                 }
                 if (LEAGUE) {
-                    $('result-message').innerHTML = `${data.confirmed ? '토너먼트 대진표에 반영했습니다.' : '결과를 보냈습니다. 운영진이 확인하면 대진표에 반영됩니다.'} <a href="${LEAGUE.backUrl}" class="underline">대진표로 돌아가기</a>`;
+                    $('result-message').innerHTML = `${data.confirmed ? '토너먼트 대진표에 반영했습니다.' : '결과를 보냈습니다. 운영진이 확인하면 대진표에 반영됩니다.'} <a href="${LEAGUE.backUrl}" data-busy="대진표를 여는 중입니다" class="underline">대진표로 돌아가기</a>`;
                 } else {
                     headToHead = data.head_to_head;
                     renderHeadToHead();
